@@ -1,0 +1,86 @@
+INCLUDE(ExternalProject)
+
+MESSAGE(STATUS "============================================")
+MESSAGE(STATUS "=           Building mysql server          =")
+MESSAGE(STATUS "============================================")
+
+SET(PVIEW_MYSQL_DIR
+  "${CMAKE_SOURCE_DIR}/extra/mysql-server/")
+SET(PVIEW_MYSQL_TAR_BALL
+  "${CMAKE_SOURCE_DIR}/extra/mysql-server/8.0.32.tar.gz")
+SET(PVIEW_MYSQL_SOURCE_DIR
+  "${CMAKE_SOURCE_DIR}/extra/mysql-server/8.0.32/")
+SET(PVIEW_MYSQL_BUILD_DIR
+  "${CMAKE_SOURCE_DIR}/extra/mysql-server/8.0.32/build")
+SET(PVIEW_MYSQL_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/mysql)
+
+IF(CMAKE_GENERATOR MATCHES "Makefiles")
+  SET(MAKE_COMMAND ${CMAKE_MAKE_PROGRAM} -j)
+ELSE() # Xcode/Ninja generators
+  SET(MAKE_COMMAND make)
+ENDIF()
+
+# Note:
+#   1. boost is too large to be placed into the repo, so by default
+#      we download it.
+#      If the build server does not have network, please manually download
+#      it and configure it as followed
+#         -DDOWNLOAD_BOOST=0
+#         -DWITH_BOOST=${CMAKE_SOURCE_DIR}/extra/boost/boost_1_77_0.tar.gz
+SET(PVIEW_MYSQL_CMAKE
+  cmake ${PVIEW_MYSQL_SOURCE_DIR}
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=1
+    -DCMAKE_INSTALL_PREFIX=${PVIEW_MYSQL_INSTALL_DIR}
+    -DWITH_DEBUG=0
+    -DENABLE_GCOV=0
+    -DINSTALL_LAYOUT=STANDALONE
+    -DWITH_ROUTER=OFF
+    -DWITH_UNIT_TESTS=OFF
+    -DWITH_EXTRA_CHARSETS=all
+    -DWITH_SSL=yes
+    -DWITH_ZLIB=bundled
+    -DWITH_MYISAM_STORAGE_ENGINE=1
+    -DWITH_INNOBASE_STORAGE_ENGINE=1
+    -DWITH_CSV_STORAGE_ENGINE=0
+    -DWITH_ARCHIVE_STORAGE_ENGINE=0
+    -DWITH_BLACKHOLE_STORAGE_ENGINE=0
+    -DWITH_FEDERATED_STORAGE_ENGINE=0
+    -DWITH_PERFSCHEMA_STORAGE_ENGINE=1
+    -DWITH_EXAMPLE_STORAGE_ENGINE=0
+    -DWITH_TEMPTABLE_STORAGE_ENGINE=1
+    -DENABLED_PROFILING=0
+    -DENABLED_LOCAL_INFILE=1
+    -DMYSQL_SERVER_SUFFIX=pview-mysql-server
+    -DDOWNLOAD_BOOST=1
+    -DWITH_BOOST=${CMAKE_SOURCE_DIR}/extra/boost/
+)
+
+# Decompress source files
+EXECUTE_PROCESS(
+  COMMAND tar xf ${PVIEW_MYSQL_TAR_BALL}
+  WORKING_DIRECTORY ${PVIEW_MYSQL_DIR}
+  RESULT_VARIABLE mysql_tar_result
+)
+# create build dir
+EXECUTE_PROCESS(
+  COMMAND mkdir -p ${PVIEW_MYSQL_BUILD_DIR}
+  WORKING_DIRECTORY ${PVIEW_MYSQL_DIR}
+  RESULT_VARIABLE mysql_mkdir_result
+)
+
+ExternalProject_Add(pview_mysql
+  PREFIX ${PVIEW_MYSQL_INSTALL_DIR}
+  SOURCE_DIR ${PVIEW_MYSQL_SOURCE_DIR}
+  BINARY_DIR ${PVIEW_MYSQL_BUILD_DIR}
+  STAMP_DIR  ${PVIEW_MYSQL_BUILD_DIR}
+  CONFIGURE_COMMAND ${PVIEW_MYSQL_CMAKE}
+  BUILD_COMMAND  ${MAKE_COMMAND}
+  INSTALL_COMMAND make install -j
+)
+
+ADD_LIBRARY(mysqld_binary OBJECT IMPORTED)
+SET_TARGET_PROPERTIES(
+  mysqld_binary
+  PROPERTIES IMPORTED_LOCATION "${PVIEW_MYSQL_BUILD_DIR}/bin/mysqld")
+ADD_DEPENDENCIES(mysqld_binary pview_mysql)

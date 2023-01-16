@@ -1,0 +1,19 @@
+build/
+install/
+extra/fmt/fmt-9.1.0/
+extra/gflags/gflags-2.2.2/
+extra/glog/glog-0.6.0/
+extra/rapidjson/rapidjson-1.1.0/
+
+#unzipped mysql source dir
+extra/mysql-server/8.0.32
+#orignal mysql download
+extra/mysql-server/mysql-server-mysql-8.0.32
+extra/mysql-server/mysql-8.0.32.tar.gz
+
+#mysql connector unzipped source code dir
+extra/mysql-connector/mysql-connector-cpp-8.0.13/
+
+extra/boost/
+
+compile_commands.json

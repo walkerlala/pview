@@ -1,0 +1,4 @@
+The mysql-8.0.32-no-tests.tar.gz archive is downloaded from
+https://github.com/mysql/mysql-server/archive/refs/tags/mysql-8.0.32.tar.gz
+with the following directories removed to make the gz file smaller:
+  - mysql-test/
