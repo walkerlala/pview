@@ -101,6 +101,33 @@ DECLARE_string(callpath);
 DECLARE_string(debug_single_file);
 
 namespace pview {
+/**
+ * Decl::Function  ->  clang::FunctionDecl
+ */
+static bool is_decl_normal_function(const Decl *d) {
+  auto kind = d->getKind();
+  return (kind == Decl::Function);
+}
+
+/**
+ * Decl::CXXMethod  ->  clang::CXXMethodDecl
+ *  which is a child class of clang::Function
+ *
+ * Decl::CXXConstructor  ->  clang::CXXConstructorDecl
+ *  which is a child class of clang::CXXMethodDecl
+ *
+ * Decl::CXXDestructor   ->  clang::CXXDestructorDecl
+ *  which is a child class of clang::CXXMethodDecl
+ *
+ * Decl::CXXConversion   ->  clang::CXXConversionDecl
+ *  which is a child class of clang::CXXMethodDecl
+ */
+static bool is_decl_cxx_method(const Decl *d) {
+  auto kind = d->getKind();
+  return (kind == Decl::CXXMethod || kind == Decl::CXXConstructor ||
+          kind == Decl::CXXDestructor || kind == Decl::CXXConversion);
+}
+
 /******************************************************************************
  * ParseTask
  *
@@ -712,8 +739,8 @@ bool PViewConsumer::handleDeclOccurrence(
   if (is_decl && d->getKind() == Decl::Binding) is_def = true;
 
   [[maybe_unused]] auto kind = d->getKind();
-  [[maybe_unused]] bool is_cxx_method = (kind == Decl::CXXMethod);
-  [[maybe_unused]] bool is_function = (kind == Decl::Function);
+  [[maybe_unused]] bool is_cxx_method = is_decl_cxx_method(d);
+  [[maybe_unused]] bool is_function = is_decl_normal_function(d);
   [[maybe_unused]] bool is_method_or_func = (is_cxx_method || is_function);
   [[maybe_unused]] bool is_class = (kind == Decl::CXXRecord);
 
@@ -731,8 +758,8 @@ void PViewConsumer::handle_func(const Decl *d, SymbolRoleSet roles,
   if (is_decl && d->getKind() == Decl::Binding) is_def = true;
 
   [[maybe_unused]] auto kind = d->getKind();
-  [[maybe_unused]] bool is_cxx_method = (kind == Decl::CXXMethod);
-  [[maybe_unused]] bool is_function = (kind == Decl::Function);
+  [[maybe_unused]] bool is_cxx_method = is_decl_cxx_method(d);
+  [[maybe_unused]] bool is_function = is_decl_normal_function(d);
   [[maybe_unused]] bool is_method_or_func = (is_cxx_method || is_function);
   [[maybe_unused]] bool is_class = (kind == Decl::CXXRecord);
 
@@ -819,7 +846,7 @@ void PViewConsumer::handle_func(const Decl *d, SymbolRoleSet roles,
     auto func_call = make_shared<FuncCall>(new_id, info);
     /** Obtain its caller's information */
     const Decl *dc = clang::cast<Decl>(lex_dc);
-    if (dc->getKind() == Decl::CXXMethod || dc->getKind() == Decl::Function) {
+    if (is_decl_cxx_method(dc) || is_decl_normal_function(dc)) {
       std::string dc_usr;
       uint64_t dc_usr_hash;
       gen_usr(dc, dc_usr, dc_usr_hash);

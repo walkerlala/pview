@@ -288,10 +288,19 @@ int do_indexing() {
       parse_results.get_all_with_except(stats);
       LOG(INFO) << "Done all indexing in "
                 << timer.DurationMicroseconds() / 1000 << " ms.";
+    }
 
+    {
       IndexQueue *iq = ctx->get_index_queue();
       LOG(INFO) << "Waiting for store threads to finish"
                 << ", num of SQL stmts unconsumed: " << iq->get_num_stmts();
+
+      using namespace std::chrono_literals;
+      while (iq->get_num_stmts() >= 1_KB) {
+        std::this_thread::sleep_for(1s);
+        LOG_EVERY_N(INFO, 5) << "num of SQL stmts unconsumed: "
+                             << iq->get_num_stmts();
+      }
     }
 
     /**

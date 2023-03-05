@@ -46,9 +46,11 @@ WHERE filepath = "{arg_filepath}"
 
 const char *SQL_is_file_obselete = R""""(
 SELECT COUNT(1) FROM `pview_index_database`.`filepaths`
-WHERE
-  filepath = "{arg_filepath}" AND
-  create_time < FROM_UNIXTIME({arg_create_time})
+WHERE FROM_UNIXTIME({arg_create_time}) > (
+  SELECT MAX(create_time)
+  FROM `pview_index_database`.`filepaths`
+  WHERE filepath = "{arg_filepath}"
+);
 )"""";
 
 const char *SQL_max_filepath_id = R""""(
