@@ -236,6 +236,14 @@ class PViewConsumer : public clang::index::IndexDataConsumer {
 
   ClassDefPtr try_get_cls_def(const clang::CXXRecordDecl *cls_decl) const;
 
+  /**
+   * Return whether a function will throw.
+   *
+   * This is based on static analysis of the function definition, and
+   * should not have false-positive.
+   */
+  bool func_might_throw(const clang::FunctionDecl *fd);
+
   void gen_usr(const clang::Decl *d, std::string &usr,
                uint64_t &usr_hash) const;
 

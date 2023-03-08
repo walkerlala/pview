@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS
   create_time datetime,
   usr VARCHAR(512),
   qualified VARCHAR(512),
+  might_throw tinyint,
   location_file_id bigint,
   location_line bigint,
   PRIMARY KEY(usr),
@@ -81,6 +82,7 @@ INSERT IGNORE INTO `pview_index_database`.`func_definitions` (
   create_time,
   usr,
   qualified,
+  might_throw,
   location_file_id,
   location_line
 ) VALUES
@@ -92,6 +94,7 @@ const char *SQL_func_def_insert_param = R""""(
   FROM_UNIXTIME({arg_create_time}),
   "{arg_usr}",
   "{arg_qualified}",
+   {arg_might_throw},
    {arg_location_file_id},
    {arg_location_line}
 )
@@ -127,6 +130,7 @@ CREATE TABLE IF NOT EXISTS
   func_call_id bigint,
   create_time datetime,
   caller_usr VARCHAR(512),
+  caller_might_throw tinyint,
   usr VARCHAR(512),
   qualified VARCHAR(512),
   location_file_id bigint,
@@ -142,6 +146,7 @@ INSERT IGNORE INTO `pview_index_database`.`func_calls` (
   func_call_id,
   create_time,
   caller_usr,
+  caller_might_throw,
   usr,
   qualified,
   location_file_id,
@@ -154,6 +159,7 @@ const char *SQL_func_call_insert_param = R""""(
    {arg_func_call_id},
   FROM_UNIXTIME({arg_create_time}),
   "{arg_caller_usr}",
+   {arg_caller_might_throw},
   "{arg_usr}",
   "{arg_qualified}",
    {arg_location_file_id},
@@ -163,6 +169,11 @@ const char *SQL_func_call_insert_param = R""""(
 
 const char *SQL_query_func_call_info = R""""(
 SELECT usr, qualified FROM `pview_index_database`.`func_calls`
+WHERE caller_usr = "{arg_caller_usr}"
+)"""";
+const char *SQL_query_func_call_info_with_throw = R""""(
+SELECT usr, qualified, caller_might_throw
+FROM `pview_index_database`.`func_calls`
 WHERE caller_usr = "{arg_caller_usr}"
 )"""";
 

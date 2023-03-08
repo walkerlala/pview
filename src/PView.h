@@ -115,6 +115,11 @@ struct DeclInfo {
    */
   uint64_t qualified_hash;
   /**
+   * true if (this is a function and it will throw),
+   * false otherwise.
+   */
+  bool func_might_throw;
+  /**
    * Symbol location
    */
   Location source_location;
@@ -193,14 +198,16 @@ class FuncCall {
 
   virtual bool is_macro() const { return false; }
 
-  void set_caller_info(uint64_t caller_usr_hash,
-                       const std::string &caller_usr) {
+  void set_caller_info(uint64_t caller_usr_hash, const std::string &caller_usr,
+                       bool caller_might_throw) {
     caller_usr_hash_ = caller_usr_hash;
     caller_usr_ = caller_usr;
+    caller_might_throw_ = caller_might_throw;
   }
 
   uint64_t get_caller_usr_hash() const { return caller_usr_hash_; }
   const auto &get_caller_usr() const { return caller_usr_; }
+  bool get_caller_might_throw() const { return caller_might_throw_; }
 
   int64_t get_id() const { return id_; }
 
@@ -209,6 +216,7 @@ class FuncCall {
   const DeclInfo info_;
   uint64_t caller_usr_hash_ = 0;
   std::string caller_usr_;
+  bool caller_might_throw_ = false;
 };
 using FuncCallPtr = std::shared_ptr<FuncCall>;
 

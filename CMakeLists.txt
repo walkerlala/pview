@@ -257,6 +257,7 @@ SET(
   ${PROJECT_ROOT}/src/StrUtils.cc
   ${PROJECT_ROOT}/src/ThreadPool.cc
   ${PROJECT_ROOT}/src/siphash.cc
+  ${PROJECT_ROOT}/src/ExceptionAnalyzer.cc
 )
 SET(PVIEW_EXECUTABLE_NAME pview)
 ADD_EXECUTABLE(${PVIEW_EXECUTABLE_NAME} ${PVIEW_SOURCES})

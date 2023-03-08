@@ -32,6 +32,9 @@ DEFINE_string(
     callpath, "",
     "Show the any one call-path from start to end. Expected format is "
     "--callpath='start_func;to_func'");
+DEFINE_string(
+    throwpath, "",
+    "Show the callpath to a exception throw beginning from a function");
 
 /** Self-managed mysqld configuration */
 DEFINE_string(mysqld, "", "Path of mysqld executable");
@@ -293,12 +296,13 @@ int do_indexing() {
     {
       IndexQueue *iq = ctx->get_index_queue();
       LOG(INFO) << "Waiting for store threads to finish"
-                << ", num of SQL stmts unconsumed: " << iq->get_num_stmts();
+                << ", num of SQL stmts to be stored into database: "
+                << iq->get_num_stmts();
 
       using namespace std::chrono_literals;
       while (iq->get_num_stmts() >= 1_KB) {
         std::this_thread::sleep_for(1s);
-        LOG_EVERY_N(INFO, 5) << "num of SQL stmts unconsumed: "
+        LOG_EVERY_N(INFO, 5) << "num of SQL stmts to be stored into database: "
                              << iq->get_num_stmts();
       }
     }
@@ -341,6 +345,22 @@ static void query_func_call_usr_qualified_using_caller_usr(
     fc_qualified.push_back(stmt_result->getString(2));
   }
 }
+
+/** Query FuncCall USR, qualified, and caller-might-throw using caller's USR */
+static void query_func_call_usr_qualified_might_throw_using_caller_usr(
+    const shared_ptr<MYSQLConn> &mysql_conn, std::vector<std::string> &fc_usr,
+    std::vector<std::string> &fc_qualified,
+    std::vector<int> &caller_might_throw, const std::string &caller_usr) {
+  const auto &stmt = fmt::format(SQL_query_func_call_info_with_throw,
+                                 fmt::arg("arg_caller_usr", caller_usr));
+  auto stmt_result = mysql_conn->query(stmt);
+  while (stmt_result->next()) {
+    fc_usr.push_back(stmt_result->getString(1));
+    fc_qualified.push_back(stmt_result->getString(2));
+    caller_might_throw.push_back(stmt_result->getInt(3));
+  }
+}
+
 
 /** Query caller usr from the func_calls table using callee's qualified name */
 static void query_func_call_caller_usr_using_qualified(
@@ -574,6 +594,104 @@ int do_query_callpath() {
   return 0;
 }
 
+/** Depth first search of callpath using the `func_calls` table */
+bool search_throwpath(std::vector<std::string> &result,
+                      const shared_ptr<MYSQLConn> &mysql_conn, int level,
+                      std::unordered_set<std::string> &searched_caller_usr,
+                      const std::vector<std::string> &all_caller_usr,
+                      const std::vector<std::string> &all_caller_qualified) {
+  ASSERT(all_caller_usr.size() == all_caller_qualified.size());
+
+  for (size_t n = 0; n < all_caller_usr.size(); n++) {
+    const auto &caller_usr = all_caller_usr[n];
+    const auto &caller_qualified = all_caller_qualified[n];
+
+    LOG_IF(INFO, FLAGS_verbose) << get_searched_depth_prefix(level)
+                                << "Searching caller: " << caller_qualified;
+
+    if (!searched_caller_usr.insert(caller_usr).second) {
+      LOG_IF(INFO, FLAGS_verbose)
+          << get_searched_depth_prefix(level)
+          << "Caller already searched: " << caller_qualified;
+      continue;
+    }
+
+    std::vector<std::string> fc_usr;
+    std::vector<std::string> fc_qualified;
+    std::vector<int> caller_might_throw;
+    query_func_call_usr_qualified_might_throw_using_caller_usr(
+        mysql_conn, fc_usr, fc_qualified, caller_might_throw, caller_usr);
+    ASSERT(fc_usr.size() == fc_qualified.size() &&
+           fc_usr.size() == caller_might_throw.size());
+
+    LOG_IF(INFO, FLAGS_verbose)
+        << get_searched_depth_prefix(level) << "Num match of caller "
+        << caller_qualified << ": " << fc_usr.size();
+    for (size_t n = 0; n < fc_usr.size(); n++) {
+      bool might_throw = caller_might_throw[n];
+      const auto &qualified_name = fc_qualified[n];
+      if (might_throw) {
+        result.push_back(qualified_name);
+        return true;
+      }
+    }
+
+    if (search_throwpath(result, mysql_conn, level + 1, searched_caller_usr,
+                         fc_usr, fc_qualified)) {
+      result.push_back(caller_qualified);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Print any one call path from @throwpath to a function that might throw.
+ * @throwpath is usually some destructor.
+ */
+int do_query_throwpath() {
+  ASSERT(FLAGS_throwpath.size());
+
+  const std::string &from_func = FLAGS_throwpath;
+
+  IndexCtx *ctx = IndexCtx::get_instance();
+  auto *mysql_conn_mgr = ctx->get_mysql_conn_mgr();
+  auto mysql_conn = mysql_conn_mgr->create_mysql_conn();
+  if (!mysql_conn) {
+    LOG(ERROR) << "Fail to create mysql connection. Can't search throwpath.";
+    return 1;
+  }
+
+  /** Retrieve USR from qualified name */
+  std::vector<std::string> all_caller_usr =
+      query_func_def_usr_using_qualified(mysql_conn, from_func);
+  if (!all_caller_usr.size()) {
+    LOG(WARNING) << "Cannot find USR using qualified name: " << from_func;
+    return 1;
+  }
+  std::vector<std::string> all_caller_qualified(all_caller_usr.size(),
+                                                from_func);
+
+  /** Search throwpath from @all_caller_usr */
+  std::unordered_set<std::string> searched_caller_usr;
+  std::vector<std::string> result;
+  int level = 0;
+  search_throwpath(result, mysql_conn, level, searched_caller_usr,
+                  all_caller_usr, all_caller_qualified);
+  if (!result.size()) {
+    LOG(WARNING) << "Cannot find throwpath from " << from_func;
+    return 1;
+  }
+  std::reverse(result.begin(), result.end());
+  LOG(INFO) << "---------- throwpath ---------";
+  for (const auto &p : result) {
+    LOG(INFO) << p;
+  }
+  LOG(INFO) << "---------- END ---------";
+  return 0;
+
+}
+
 int do_query() {
   if (FLAGS_callee_of.size()) {
     do_query_callee_of();
@@ -585,6 +703,10 @@ int do_query() {
 
   if (FLAGS_callpath.size()) {
     do_query_callpath();
+  }
+
+  if (FLAGS_throwpath.size()) {
+    do_query_throwpath();
   }
 
   return 0;

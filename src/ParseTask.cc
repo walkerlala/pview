@@ -39,6 +39,7 @@
 #include <glog/logging.h>
 
 #include "Common.h"
+#include "ExceptionAnalyzer.h"
 #include "FileUtils.h"
 #include "IndexCtx.h"
 #include "IndexQueue.h"
@@ -189,6 +190,7 @@ void ParseTask::append_indexed_func_defs_value(std::ostringstream &oss,
   ASSERT(func_def_id >= 0);
   const auto &usr = d->get_info().usr;
   const auto &qualified = d->get_info().qualified;
+  bool might_throw = d->get_info().func_might_throw;
   const int64_t location_file_id = d->get_info().source_location.file_id;
   int64_t location_line = d->get_info().source_location.line;
 
@@ -196,6 +198,7 @@ void ParseTask::append_indexed_func_defs_value(std::ostringstream &oss,
       SQL_func_def_insert_param, fmt::arg("arg_func_def_id", func_def_id),
       fmt::arg("arg_create_time", current_time_), fmt::arg("arg_usr", usr),
       fmt::arg("arg_qualified", qualified),
+      fmt::arg("arg_might_throw", might_throw),
       fmt::arg("arg_location_file_id", location_file_id),
       fmt::arg("arg_location_line", location_line));
 
@@ -233,6 +236,7 @@ void ParseTask::append_indexed_func_calls_value(std::ostringstream &oss,
   int64_t func_call_id = d->get_id();
   ASSERT(func_call_id >= 0);
   const auto &caller_usr = d->get_caller_usr();
+  bool caller_might_throw = d->get_caller_might_throw();
   const auto &usr = d->get_info().usr;
   const auto &qualified = d->get_info().qualified;
   const int64_t location_file_id = d->get_info().source_location.file_id;
@@ -241,7 +245,9 @@ void ParseTask::append_indexed_func_calls_value(std::ostringstream &oss,
   const auto &stmt = fmt::format(
       SQL_func_call_insert_param, fmt::arg("arg_func_call_id", func_call_id),
       fmt::arg("arg_create_time", current_time_),
-      fmt::arg("arg_caller_usr", caller_usr), fmt::arg("arg_usr", usr),
+      fmt::arg("arg_caller_usr", caller_usr),
+      fmt::arg("arg_caller_might_throw", caller_might_throw),
+      fmt::arg("arg_usr", usr),
       fmt::arg("arg_qualified", qualified),
       fmt::arg("arg_location_file_id", location_file_id),
       fmt::arg("arg_location_line", location_line));
@@ -832,6 +838,7 @@ void PViewConsumer::handle_func(const Decl *d, SymbolRoleSet roles,
     parse_task_->cache_add_func_def(fd, func_def);
     parse_task_->add_func_def(func_def);
 #endif
+    info.func_might_throw = func_might_throw(fd);
     int64_t new_id = IndexCtx::get_instance()->get_next_func_def_id();
     auto func_def =
         make_shared<FuncDef>(new_id, info, is_static, is_virtual, nullptr);
@@ -844,18 +851,57 @@ void PViewConsumer::handle_func(const Decl *d, SymbolRoleSet roles,
      */
     int64_t new_id = IndexCtx::get_instance()->get_next_func_call_id();
     auto func_call = make_shared<FuncCall>(new_id, info);
-    /** Obtain its caller's information */
+    /** Obtain its caller's information if any */
     const Decl *dc = clang::cast<Decl>(lex_dc);
     if (is_decl_cxx_method(dc) || is_decl_normal_function(dc)) {
-      std::string dc_usr;
-      uint64_t dc_usr_hash;
-      gen_usr(dc, dc_usr, dc_usr_hash);
-      func_call->set_caller_info(dc_usr_hash, dc_usr);
+      auto *caller_fd = clang::dyn_cast<clang::FunctionDecl>(dc);
+      ASSERT(caller_fd);
+      bool caller_might_throw = func_might_throw(caller_fd);
+
+      std::string caller_usr;
+      uint64_t caller_usr_hash;
+      gen_usr(caller_fd, caller_usr, caller_usr_hash);
+
+      func_call->set_caller_info(caller_usr_hash, caller_usr,
+                                 caller_might_throw);
     } else {
       DLOG(WARNING) << "No caller object for func call " << info.usr;
     }
     parse_task_->add_func_call(func_call);
   }
+}
+
+bool PViewConsumer::func_might_throw(const clang::FunctionDecl *fd) {
+  ExceptionAnalyzer exception_tracer;
+
+  // Does not check recursively.
+  //
+  // FIXME
+  // Ideally we want to check only the function itself (i.e., level=1)
+  // because we will link the call path ourself using the database.
+  // But we have to handle MACRO properly.
+  // Now we hardcode it to be 5, which should deal with most of the case.
+  exception_tracer.setMaxTraceLevel(5);
+
+  // Ignore AssertionError
+  // Note that
+  //  - the @ignored_exceptions is a list separated by ;
+  //    for example, "AExceptionType;BExceptionType"
+  //  - Each name should be a short-name, e.g., "AExceptionType"
+  //    instead of "SomeNameSpace::AExceptionType"
+  std::string ignored_exceptions = "AssertionError";
+  llvm::SmallVector<llvm::StringRef, 8> ignored_vec;
+  llvm::StringRef(ignored_exceptions).split(ignored_vec, ",", -1, false);
+
+  llvm::StringSet<> ignored_set;
+  ignored_set.insert(ignored_vec.begin(), ignored_vec.end());
+  exception_tracer.ignoreExceptions(std::move(ignored_set));
+
+  // Ingore bad alloc throw by new
+  exception_tracer.ignoreBadAlloc(true);
+
+  auto exception_behaviour = exception_tracer.analyze(fd).getBehaviour();
+  return (exception_behaviour == pview::ExceptionAnalyzer::State::Throwing);
 }
 
 void PViewConsumer::gen_usr(const Decl *d, std::string &usr,
@@ -1077,7 +1123,10 @@ unique_ptr<ASTConsumer> PViewFrontendAction::CreateASTConsumer(
   shared_ptr<Preprocessor> pp = ci.getPreprocessorPtr();
   pp->addPPCallbacks(make_unique<PViewPPCallBack>(parse_task_));
 
-  /** AST consumer to index function/class/method */
+  /**
+   * AST consumer to index function/class/method definitions,
+   * throw expressions, etc.
+   */
   IndexingOptions index_opts;
   index_opts.SystemSymbolFilter = IndexingOptions::SystemSymbolFilterKind::All;
   index_opts.IndexFunctionLocals = true;

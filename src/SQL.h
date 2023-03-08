@@ -35,6 +35,7 @@ extern const char *SQL_func_call_create;
 extern const char *SQL_func_call_insert_header;
 extern const char *SQL_func_call_insert_param;
 extern const char *SQL_query_func_call_info;
+extern const char *SQL_query_func_call_info_with_throw;
 extern const char *SQL_query_caller_usr_using_qualified;
 extern const char *SQL_max_func_call_id;
 }  // namespace pview
