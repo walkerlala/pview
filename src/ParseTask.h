@@ -198,8 +198,8 @@ class ParseTask : public std::enable_shared_from_this<ParseTask> {
  * A boilerplate ASTFrontendAction.
  *
  * The core part is PViewConsumer.
- * It is hidded after a MultiplexConsumer
- * but there is only one consumer currently.
+ * ASTFrontendAction is hiddened after a MultiplexConsumer.
+ * Even though it could be "multiplex", there is only one consumer currently.
  ******************************************************************************/
 class PViewFrontendAction : public clang::ASTFrontendAction {
  protected:
@@ -217,6 +217,13 @@ class PViewFrontendAction : public clang::ASTFrontendAction {
 /******************************************************************************
  * AST consumer for indexing
  *
+ * This is the core component for indexing.
+ *
+ * It accept as input each `clang::Decl` which the clang frontend is parsing
+ * and compiling each translation unit, and then generate function/class symbols
+ * in form of pview::FuncDef / pview::FuncCall / pview::ClassDef, which are then
+ * sended to the corresponding ParseTask and be transformed into a set of
+ * SQL statements and committed to the backend database.
  ******************************************************************************/
 class PViewConsumer : public clang::index::IndexDataConsumer {
  public:

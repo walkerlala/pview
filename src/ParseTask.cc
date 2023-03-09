@@ -880,8 +880,8 @@ bool PViewConsumer::func_might_throw(const clang::FunctionDecl *fd) {
   // Ideally we want to check only the function itself (i.e., level=1)
   // because we will link the call path ourself using the database.
   // But we have to handle MACRO properly.
-  // Now we hardcode it to be 5, which should deal with most of the case.
-  exception_tracer.setMaxTraceLevel(5);
+  // Now we hardcode it to be 20, which should deal with most of the case.
+  exception_tracer.setMaxTraceLevel(20);
 
   // Ignore AssertionError
   // Note that

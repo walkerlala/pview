@@ -623,17 +623,13 @@ bool search_throwpath(std::vector<std::string> &result,
         mysql_conn, fc_usr, fc_qualified, caller_might_throw, caller_usr);
     ASSERT(fc_usr.size() == fc_qualified.size() &&
            fc_usr.size() == caller_might_throw.size());
-
-    LOG_IF(INFO, FLAGS_verbose)
-        << get_searched_depth_prefix(level) << "Num match of caller "
-        << caller_qualified << ": " << fc_usr.size();
-    for (size_t n = 0; n < fc_usr.size(); n++) {
-      bool might_throw = caller_might_throw[n];
-      const auto &qualified_name = fc_qualified[n];
-      if (might_throw) {
-        result.push_back(qualified_name);
-        return true;
-      }
+    if (!fc_usr.size()) {
+      continue;
+    }
+    int caller_throw = caller_might_throw[0];
+    if (caller_throw) {
+      result.push_back(caller_qualified);
+      return true;
     }
 
     if (search_throwpath(result, mysql_conn, level + 1, searched_caller_usr,
@@ -677,7 +673,7 @@ int do_query_throwpath() {
   std::vector<std::string> result;
   int level = 0;
   search_throwpath(result, mysql_conn, level, searched_caller_usr,
-                  all_caller_usr, all_caller_qualified);
+                   all_caller_usr, all_caller_qualified);
   if (!result.size()) {
     LOG(WARNING) << "Cannot find throwpath from " << from_func;
     return 1;
