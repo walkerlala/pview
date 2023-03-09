@@ -151,10 +151,9 @@ int ParseTask::init_mysql_conn() {
 
 /** Entry point of "store task" */
 void ParseTask::do_store() {
-  auto &thread_pool = ThreadPool::GlobalPool();
   if (init_mysql_conn()) {
-    LOG(ERROR) << "Parse task[ " << thread_pool.GetWorkerId() << "]"
-               << " failed to create mysql connection"
+    LOG(ERROR) << get_store_task_desc()
+               << "failed to create mysql connection"
                << ". Abort indexing.";
     return;
   }
@@ -180,8 +179,7 @@ void ParseTask::do_store() {
     LOG_IF(INFO, FLAGS_verbose)
         << "Done storing a batch of stmts: " << stmts->size();
   }
-  LOG(INFO) << "Task[" << thread_pool.GetWorkerId() << "]"
-            << " Store stmts done its job. Exit.";
+  LOG(INFO) << get_store_task_desc() << "done its job. Exit.";
 }
 
 void ParseTask::append_indexed_func_defs_value(std::ostringstream &oss,
@@ -194,13 +192,17 @@ void ParseTask::append_indexed_func_defs_value(std::ostringstream &oss,
   const int64_t location_file_id = d->get_info().source_location.file_id;
   int64_t location_line = d->get_info().source_location.line;
 
+  /* clang-format off */
   const auto &stmt = fmt::format(
-      SQL_func_def_insert_param, fmt::arg("arg_func_def_id", func_def_id),
-      fmt::arg("arg_create_time", current_time_), fmt::arg("arg_usr", usr),
+      SQL_func_def_insert_param,
+      fmt::arg("arg_func_def_id", func_def_id),
+      fmt::arg("arg_create_time", current_time_),
+      fmt::arg("arg_usr", usr),
       fmt::arg("arg_qualified", qualified),
       fmt::arg("arg_might_throw", might_throw),
       fmt::arg("arg_location_file_id", location_file_id),
       fmt::arg("arg_location_line", location_line));
+  /* clang-format on */
 
   oss << stmt;
 }
@@ -242,8 +244,10 @@ void ParseTask::append_indexed_func_calls_value(std::ostringstream &oss,
   const int64_t location_file_id = d->get_info().source_location.file_id;
   int64_t location_line = d->get_info().source_location.line;
 
+  /* clang-format off */
   const auto &stmt = fmt::format(
-      SQL_func_call_insert_param, fmt::arg("arg_func_call_id", func_call_id),
+      SQL_func_call_insert_param,
+      fmt::arg("arg_func_call_id", func_call_id),
       fmt::arg("arg_create_time", current_time_),
       fmt::arg("arg_caller_usr", caller_usr),
       fmt::arg("arg_caller_might_throw", caller_might_throw),
@@ -251,6 +255,7 @@ void ParseTask::append_indexed_func_calls_value(std::ostringstream &oss,
       fmt::arg("arg_qualified", qualified),
       fmt::arg("arg_location_file_id", location_file_id),
       fmt::arg("arg_location_line", location_line));
+  /* clang-format on */
 
   oss << stmt;
 }
@@ -303,10 +308,13 @@ int ParseTask::send_indexed_result() {
   }
 
   /** filepaths */
+  /* clang-format off */
   std::string replace_fn_stmt = fmt::format(
-      SQL_replace_filepath, fmt::arg("arg_filepath_id", current_filepath_id_),
+      SQL_replace_filepath,
+      fmt::arg("arg_filepath_id", current_filepath_id_),
       fmt::arg("arg_filepath", current_filepath_),
       fmt::arg("arg_create_time", current_time_));
+  /* clang-format on */
   ASSERT(replace_fn_stmt.size());
   stmts.push_back(std::move(replace_fn_stmt));
 
@@ -324,10 +332,14 @@ int ParseTask::update_indexed_file(const std::string &filepath,
                                    int64_t filepath_id, int64_t timestamp) {
   ASSERT(mysql_conn_);
 
+  /* clang-format off */
   const std::string &replace_stmt = fmt::format(
-      SQL_replace_filepath, fmt::arg("arg_filepath_id", filepath_id),
+      SQL_replace_filepath,
+      fmt::arg("arg_filepath_id", filepath_id),
       fmt::arg("arg_filepath", filepath),
       fmt::arg("arg_create_time", timestamp));
+  /* clang-format on */
+
   {
     MYSQLTableLock lk(mysql_conn_, kPViewIndexDB, kPViewFileNameTbl);
     if (lk.lock()) {
@@ -375,10 +387,15 @@ int64_t ParseTask::query_or_assign_file_id(const std::string &filepath) {
 
     IndexCtx *ctx = IndexCtx::get_instance();
     fn_id = ctx->get_next_filepath_id();
+
+    /* clang-format off */
     const std::string &replace_stmt =
-        fmt::format(SQL_replace_filepath, fmt::arg("arg_filepath_id", fn_id),
+        fmt::format(SQL_replace_filepath,
+                    fmt::arg("arg_filepath_id", fn_id),
                     fmt::arg("arg_filepath", filepath),
                     fmt::arg("arg_create_time", file_mtime));
+    /* clang-format on */
+
     if (mysql_conn_->dml(replace_stmt)) {
       LOG(ERROR) << "Fail to update filepath id for: " << filepath
                  << ", new id: " << fn_id;
@@ -412,9 +429,13 @@ bool ParseTask::is_file_need_update(const std::string &filepath,
     }
   }
 
+  /* clang-format off */
   const auto &stmt1 =
-      fmt::format(SQL_is_file_obselete, fmt::arg("arg_filepath", filepath),
+      fmt::format(SQL_is_file_obselete,
+                  fmt::arg("arg_filepath", filepath),
                   fmt::arg("arg_create_time", file_mtime));
+  /* clang-format on */
+
   auto stmt1_result = mysql_conn_->query(stmt1);
   if (!stmt1_result) {
     return true; /* need update */
@@ -432,29 +453,62 @@ bool ParseTask::is_file_need_update(const std::string &filepath,
 
 /** Entry point of "parse task" */
 void ParseTask::do_parse() {
-  auto &thread_pool = ThreadPool::GlobalPool();
   if (init_mysql_conn()) {
-    LOG(ERROR) << "Parse task[ " << thread_pool.GetWorkerId() << "]"
-               << " failed to create mysql connection"
-               << ". Abort indexing.";
+    LOG(ERROR) << get_parse_task_desc()
+               << "failed to create mysql connection. Abort indexing.";
     return;
   }
 
   Timer timer;
   size_t total_work = 0;
+  size_t success_work = 0;
   /** Parse translation unit and generate the graph */
   while (true) {
     size_t idx = counter_->fetch_add(1);
     if (idx >= cmds_.size()) {
       break;
     }
-    index_translation_unit(idx);
     total_work++;
+    if (!index_translation_unit(idx)) {
+      success_work++;
+    }
   }
 
-  LOG(INFO) << "Task[" << thread_pool.GetWorkerId() << "]"
-            << " finished indexing " << total_work << " translation units in "
+  LOG(INFO) << get_parse_task_desc()
+            << "finished indexing " << total_work << " translation units ("
+            << success_work << " succeeded) in "
             << timer.DurationMicroseconds() / 1000 << " ms.";
+  clean_up();
+}
+
+void ParseTask::clean_up() {
+  cmds_.clear();
+  counter_ = nullptr;;
+
+  mysql_conn_ = nullptr;
+
+  source_mgr_ = nullptr;
+
+  current_time_ = 0;
+  current_filepath_.clear();
+  current_filepath_id_ = -1;
+  current_translation_unit_idx_ = 0;
+
+  func_defs_.clear();
+  func_calls_.clear();
+  class_defs_.clear();
+
+  local_filepath_cache_.clear();
+}
+
+std::string ParseTask::get_parse_task_desc() const {
+  auto &thread_pool = ThreadPool::GlobalPool();
+  return ("ParseTask[" + std::to_string(thread_pool.GetWorkerId()) + "] ");
+}
+
+std::string ParseTask::get_store_task_desc() const {
+  auto &thread_pool = ThreadPool::GlobalPool();
+  return ("StoreTask[" + std::to_string(thread_pool.GetWorkerId()) + "] ");
 }
 
 /** return true on error, otherwise false */
@@ -676,18 +730,18 @@ bool ParseTask::index_translation_unit(size_t idx) {
    *  - statements for filepath
    * The IndexQueue and ParseTask::store_tasks() guarantee the
    * "happens-after-or-fail" relationship within the same batch, so that
-   * we are sure update to filepaths will come after anything other, which
+   * we are sure that update to filepaths will come after anything other, which
    * means that
    *  - If update to a file path happens, all index result of this file
    *    have succeeded, otherwise
-   *  - If update to a file does not happen, it will be re-index next time.
+   *  - If update to a file does not happen, it will be re-index the next time.
    */
   if (send_indexed_result()) {
     LOG(ERROR) << "Fail to send batched-update indexed result for " << filepath;
     return true;
   }
 
-  LOG(INFO) << "Done parsing in " << timer.DurationMicroseconds() / 1000
+  LOG(INFO) << "Done indexing in " << timer.DurationMicroseconds() / 1000
             << " ms (" << idx << "/" << cmds_.size() << "): " << cmd.Filename;
   return false;
 }
@@ -1090,12 +1144,6 @@ void PViewPPCallBack::MacroDefined(const Token &MacroNameTok,
   parse_task_->add_func_def(func_def);
 }
 
-/// Hook called whenever a macro \#undef is seen.
-/// \param MacroNameTok The active Token
-/// \param MD A MacroDefinition for the named macro.
-/// \param Undef New MacroDirective if the macro was defined, null otherwise.
-///
-/// MD is released immediately following this callback.
 void PViewPPCallBack::MacroUndefined(const Token &MacroNameTok,
                                      const MacroDefinition &MD,
                                      const MacroDirective *Undef) {

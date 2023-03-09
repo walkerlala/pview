@@ -57,7 +57,7 @@ constexpr uint64_t kInvalidColumn = UINT64_MAX;
  *
  * Note that all indexed file under the project root is truncated to be
  * related to the project root. Therefore it is usually not that long for
- * most file.
+ * most files.
  */
 constexpr size_t kMaxFilePathLen = 2048;
 constexpr const char *kTooLongFilePath = "FILE_PATH_TOO_LONG";
@@ -84,7 +84,7 @@ struct Range {
 };
 
 /******************************************************************************
- * DeclInfo represent every function/method/class/objec symbol that we met
+ * DeclInfo represents function/method/class symbol that we met
  * when indexing the project.
  *
  ******************************************************************************/
@@ -115,7 +115,7 @@ struct DeclInfo {
    */
   uint64_t qualified_hash;
   /**
-   * true if (this is a function and it will throw),
+   * true if this is a function and it will throw,
    * false otherwise.
    */
   bool func_might_throw;
@@ -130,8 +130,8 @@ struct DeclInfo {
 };
 
 /******************************************************************************
- * Function definition, including class method, normal function, and function
- * like macro.
+ * Function definition, including class method, normal function,
+ * and function-like macro.
  *
  * For function analysis (caller, callee, callpath, etc), we handle
  * function-like macro as function.
@@ -139,10 +139,10 @@ struct DeclInfo {
 class FuncDef {
  public:
   /**
-   * If it is a cxx method, then by the time we met this function definition,
-   * we must have already seen definition of its class, otherwise it would
-   * not compile successfully, i.e., if @cls is nullptr, this FuncDef is
-   * ill-formed.
+   * If it is a cxx method, by the time we met this function definition,
+   * we must have already seen definition of its class (otherwise it would
+   * not compile successfully). That say, if @cls is nullptr, this FuncDef is
+   * a normal function rather than a class method.
    */
   FuncDef(int64_t id, const DeclInfo &info, bool is_static, bool is_virtual,
           const std::shared_ptr<ClassDef> &cls)

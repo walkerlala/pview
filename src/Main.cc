@@ -283,9 +283,7 @@ int do_indexing() {
     }
     ASSERT(s == (num_parse_tasks + num_store_tasks));
 
-    /**
-     * Wait for parse thread finished
-     */
+    /** Wait for parse thread finished */
     {
       std::vector<ThreadStat> stats;
       parse_results.get_all_with_except(stats);
@@ -293,6 +291,11 @@ int do_indexing() {
                 << timer.DurationMicroseconds() / 1000 << " ms.";
     }
 
+    /** Tell store threads to stop after finishing all the stmts. */
+    IndexQueue *queue = ctx->get_index_queue();
+    queue->set_stop();
+
+    /** Print SQL stmts stats while store threads are still working on it */
     {
       IndexQueue *iq = ctx->get_index_queue();
       LOG(INFO) << "Waiting for store threads to finish"
@@ -307,11 +310,7 @@ int do_indexing() {
       }
     }
 
-    /**
-     * Tell store threads to stop after finishing all the stmts.
-     */
-    IndexQueue *queue = ctx->get_index_queue();
-    queue->set_stop();
+    /** Join store tasks */
     {
       std::vector<ThreadStat> stats;
       store_results.get_all_with_except(stats);

@@ -15,15 +15,15 @@ class ParseTask;
 /** If modified these names, please modify SQL.cc/SQL.h */
 constexpr const char *kPViewIndexDB = "pview_index_database";
 constexpr const char *kPViewFileNameTbl = "filepaths";
-constexpr const char *kPViewFuncDefTbl = "function_definitions";
-constexpr const char *kPViewFuncCallTbl = "function_calls";
+constexpr const char *kPViewFuncDefTbl = "func_definitions";
+constexpr const char *kPViewFuncCallTbl = "func_calls";
 
 /******************************************************************************
  * Indexing service which
  *  - drive the compilation of every translation unit, and (parse task)
  *  - accept indexed token from PViewConsumer, and (parse task)
  *  - generate SQL statements, and (parse task)
- *  - store SQL statements into backend mysql server
+ *  - store SQL statements into backend mysql server (store task)
  *
  * For every translation unit, the control flow goes like this:
  *
@@ -46,7 +46,9 @@ class ParseTask : public std::enable_shared_from_this<ParseTask> {
   /** Entry point of "store task" */
   void do_store();
 
+  /** Get source files manager for current translation unit */
   clang::SourceManager *get_source_mgr() { return source_mgr_; }
+  /** Replace source files manager for current translation unit */
   void update_source_mgr(clang::SourceManager *source_mgr) {
     source_mgr_ = source_mgr;
   }
@@ -105,20 +107,25 @@ class ParseTask : public std::enable_shared_from_this<ParseTask> {
 
   /**
    * Query the backend database for file id of @filepath
+   *
    * If @filepath does not exist in the database, assign a new one for it
-   * and update it into the backend server. This is a atomic read-modify-update
-   * operation using database write lock.
+   * and update it into the backend server.
+   * This is a atomic read-modify-update operation using database write lock.
    */
   int64_t query_or_assign_file_id(const std::string &filepath);
 
   /**
-   * Whether @filepath need to be re-index provided that
-   * its last modify timestamp is @file_mtime.
+   * Whether @filepath need to be re-index provided that the last modify
+   * timestamp is @file_mtime.
    *
    * If the timestamp in backend database is equal or newer than @file_mtime,
    * then this file does not need to be re-index.
    *
    * @returns true if need to be re-index; otherwise false.
+   *
+   * Note:
+   *  @file_mtime is not necessary the lastest modification time of @filepath,
+   *  but could be the lastest modification time of the files it includes.
    */
   bool is_file_need_update(const std::string &filepath, int64_t file_mtime);
 
@@ -148,6 +155,23 @@ class ParseTask : public std::enable_shared_from_this<ParseTask> {
    */
   void append_indexed_func_calls_value(std::ostringstream &oss,
                                        const FuncCallPtr &d);
+  /**
+   * Cleanup.
+   *  - Close MYSQL connection
+   */
+  void clean_up();
+
+  /**
+   * Return a diagnostic string header for logging
+   *  Parse task[${task_id}]
+   */
+  std::string get_parse_task_desc() const;
+
+  /**
+   * Return a diagnostic string header for logging
+   *  Store task[${task_id}]
+   */
+  std::string get_store_task_desc() const;
 
  protected:
   std::vector<clang::tooling::CompileCommand> cmds_;
@@ -189,7 +213,9 @@ class ParseTask : public std::enable_shared_from_this<ParseTask> {
   std::vector<ClassDefPtr> class_defs_;
 
   /**
-   * In-mem cache to avoid querying the database for every def
+   * In-mem cache to avoid querying the database for every filepath.
+   *
+   * { filepath, lastest-modify-time }
    */
   std::unordered_map<std::string, int64_t> local_filepath_cache_;
 };
@@ -197,9 +223,10 @@ class ParseTask : public std::enable_shared_from_this<ParseTask> {
 /******************************************************************************
  * A boilerplate ASTFrontendAction.
  *
- * The core part is PViewConsumer.
  * ASTFrontendAction is hiddened after a MultiplexConsumer.
  * Even though it could be "multiplex", there is only one consumer currently.
+ * This class is a boilerplate to use the clang frontend.
+ * The core part is PViewConsumer.
  ******************************************************************************/
 class PViewFrontendAction : public clang::ASTFrontendAction {
  protected:
@@ -219,9 +246,10 @@ class PViewFrontendAction : public clang::ASTFrontendAction {
  *
  * This is the core component for indexing.
  *
- * It accept as input each `clang::Decl` which the clang frontend is parsing
- * and compiling each translation unit, and then generate function/class symbols
- * in form of pview::FuncDef / pview::FuncCall / pview::ClassDef, which are then
+ * It accept as input each `clang::Decl` which is output by the clang frontend
+ * when it is parsing and compiling each translation unit.
+ * The PViewConsumer then generate function/class symbols in form of
+ * pview::FuncDef / pview::FuncCall / pview::ClassDef, which are then
  * sended to the corresponding ParseTask and be transformed into a set of
  * SQL statements and committed to the backend database.
  ******************************************************************************/
@@ -251,16 +279,33 @@ class PViewConsumer : public clang::index::IndexDataConsumer {
    */
   bool func_might_throw(const clang::FunctionDecl *fd);
 
+  /** Generate USR and USR hash for @d */
   void gen_usr(const clang::Decl *d, std::string &usr,
                uint64_t &usr_hash) const;
 
-  /** return true on error, otherwise false */
+  /**
+   * Generate DeclInfo for a clang::Decl
+   *
+   * return true on error, otherwise false
+   */
   bool gen_decl_info(DeclInfo &info, const clang::Decl *d, bool is_decl,
                      bool is_def, bool is_method_or_func, bool is_class,
                      clang::SourceLocation src_loc) const;
 
+  /**
+   * Generate "qualified" name for a clang::Decl
+   *
+   * A "qualified" name is one that we use to specify a c++ symbol without
+   * ambiguity, e.g., "MyNameSpace::MyClass::MyMethod".
+   * The qualified name does NOT specify function parameters, though.
+   */
   std::string gen_qualified_name(const clang::Decl *d) const;
 
+  /**
+   * Generate short name for a clang::Decl
+   *
+   * A short name is just a shorter version of qualified name, i.e., "MyMethod".
+   */
   std::string gen_short_name(const clang::Decl *d) const;
 
   clang::PrintingPolicy get_print_policy() const;
@@ -285,6 +330,43 @@ class PViewPPCallBack : public clang::PPCallbacks {
   /// Callback invoked whenever an inclusion directive of
   /// any kind (\c \#include, \c \#import, etc.) has been processed, regardless
   /// of whether the inclusion will actually result in an inclusion.
+  ///
+  /// \param HashLoc The location of the '#' that starts the inclusion
+  /// directive.
+  ///
+  /// \param IncludeTok The token that indicates the kind of inclusion
+  /// directive, e.g., 'include' or 'import'.
+  ///
+  /// \param FileName The name of the file being included, as written in the
+  /// source code.
+  ///
+  /// \param IsAngled Whether the file name was enclosed in angle brackets;
+  /// otherwise, it was enclosed in quotes.
+  ///
+  /// \param FilenameRange The character range of the quotes or angle brackets
+  /// for the written file name.
+  ///
+  /// \param File The actual file that may be included by this inclusion
+  /// directive.
+  ///
+  /// \param SearchPath Contains the search path which was used to find the file
+  /// in the file system. If the file was found via an absolute include path,
+  /// SearchPath will be empty. For framework includes, the SearchPath and
+  /// RelativePath will be split up. For example, if an include of "Some/Some.h"
+  /// is found via the framework path
+  /// "path/to/Frameworks/Some.framework/Headers/Some.h", SearchPath will be
+  /// "path/to/Frameworks/Some.framework/Headers" and RelativePath will be
+  /// "Some.h".
+  ///
+  /// \param RelativePath The path relative to SearchPath, at which the include
+  /// file was found. This is equal to FileName except for framework includes.
+  ///
+  /// \param Imported The module, whenever an inclusion directive was
+  /// automatically turned into a module import or null otherwise.
+  ///
+  /// \param FileType The characteristic kind, indicates whether a file or
+  /// directory holds normal user code, system code, or system code which is
+  /// implicitly 'extern "C"' in C++ mode.
   void InclusionDirective(clang::SourceLocation HashLoc,
                           const clang::Token &IncludeTok,
                           llvm::StringRef FileName, bool IsAngled,
