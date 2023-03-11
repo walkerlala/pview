@@ -1,3 +1,7 @@
+//=---------------------------------------------------------------------------=/
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
+//=---------------------------------------------------------------------------=/
 #include <atomic>
 #include <memory>
 #include <vector>
@@ -38,9 +42,11 @@
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
+#include "ClangCompiler.h"
 #include "Common.h"
 #include "ExceptionAnalyzer.h"
 #include "FileUtils.h"
+#include "IncludeAnalyzer.h"
 #include "IndexCtx.h"
 #include "IndexQueue.h"
 #include "MYSQLConn.h"
@@ -94,11 +100,6 @@ using clang::tooling::CompileCommand;
 
 DECLARE_int64(verbose);
 DECLARE_int64(db_update_batch_size);
-DECLARE_uint64(max_dop);
-DECLARE_string(root);
-DECLARE_string(caller_of);
-DECLARE_string(callee_of);
-DECLARE_string(callpath);
 DECLARE_string(debug_single_file);
 
 namespace pview {
@@ -152,8 +153,7 @@ int ParseTask::init_mysql_conn() {
 /** Entry point of "store task" */
 void ParseTask::do_store() {
   if (init_mysql_conn()) {
-    LOG(ERROR) << get_store_task_desc()
-               << "failed to create mysql connection"
+    LOG(ERROR) << get_store_task_desc() << "failed to create mysql connection"
                << ". Abort indexing.";
     return;
   }
@@ -412,43 +412,18 @@ int64_t ParseTask::query_or_assign_file_id(const std::string &filepath) {
   return fn_id;
 }
 
-bool ParseTask::is_file_need_update(const std::string &filepath,
-                                    int64_t file_mtime) {
-  const auto &stmt0 =
-      fmt::format(SQL_is_file_exists, fmt::arg("arg_filepath", filepath));
-  auto stmt0_result = mysql_conn_->query(stmt0);
-  if (!stmt0_result) {
-    return true; /* need update */
+int64_t ParseTask::get_file_last_mtime(const std::string &filepath) {
+  const auto &stmt =
+      fmt::format(SQL_get_file_mtime, fmt::arg("arg_filepath", filepath));
+  auto stmt_result = mysql_conn_->query(stmt);
+  if (!stmt_result) {
+    return 0;
   }
-  while (stmt0_result->next()) {
-    int64_t cnt = stmt0_result->getInt(1);
-    if (cnt <= 0) {
-      return true; /* need update */
-    } else {
-      break;
-    }
+  while (stmt_result->next()) {
+    int64_t mtime = stmt_result->getInt(1);
+    return mtime;
   }
-
-  /* clang-format off */
-  const auto &stmt1 =
-      fmt::format(SQL_is_file_obselete,
-                  fmt::arg("arg_filepath", filepath),
-                  fmt::arg("arg_create_time", file_mtime));
-  /* clang-format on */
-
-  auto stmt1_result = mysql_conn_->query(stmt1);
-  if (!stmt1_result) {
-    return true; /* need update */
-  }
-  while (stmt1_result->next()) {
-    int64_t cnt = stmt1_result->getInt(1);
-    if (cnt > 0) {
-      return true; /* need update */
-    } else {
-      return false; /* don't need update */
-    }
-  }
-  return true; /* need update */
+  return 0;
 }
 
 /** Entry point of "parse task" */
@@ -474,16 +449,15 @@ void ParseTask::do_parse() {
     }
   }
 
-  LOG(INFO) << get_parse_task_desc()
-            << "finished indexing " << total_work << " translation units ("
-            << success_work << " succeeded) in "
+  LOG(INFO) << get_parse_task_desc() << "finished indexing " << total_work
+            << " translation units (" << success_work << " succeeded) in "
             << timer.DurationMicroseconds() / 1000 << " ms.";
   clean_up();
 }
 
 void ParseTask::clean_up() {
   cmds_.clear();
-  counter_ = nullptr;;
+  counter_ = nullptr;
 
   mysql_conn_ = nullptr;
 
@@ -631,12 +605,17 @@ bool ParseTask::index_translation_unit(size_t idx) {
   /**
    * Skip this file if it is not updated since last time.
    */
-  std::string filepath = cmd.Filename;
-  int64_t file_mtime = get_file_mtime(filepath);
-  simplify_source_path(filepath);
+  std::string original_filepath = cmd.Filename;
 
-  if (!is_file_need_update(filepath, file_mtime)) {
-    LOG(INFO) << "File indexes up-to-date: " << filepath;
+  std::string filepath = original_filepath;
+  simplify_source_path(filepath);
+  int64_t last_mtime = get_file_last_mtime(filepath);
+
+  IncludeAnalyzer include_analyzer(original_filepath, last_mtime, cmd);
+  bool need_reindex = include_analyzer.check_need_reindex();
+  if (!need_reindex) {
+    LOG(INFO) << "File indexes up-to-date (" << idx << "/" << cmds_.size()
+              << "): " << original_filepath;
     return false;
   }
 
@@ -664,36 +643,12 @@ bool ParseTask::index_translation_unit(size_t idx) {
   current_filepath_id_ = filepath_id;
   current_translation_unit_idx_ = idx;
 
-  const vector<std::string> &cmd_line = cmd.CommandLine;
-  vector<const char *> cmd_line_char;
-  for (const auto &cmd_str : cmd_line) {
-    cmd_line_char.push_back(cmd_str.c_str());
-  }
-  llvm::ArrayRef<const char *> cmd_line_ref(cmd_line_char);
-  auto ci = build_compiler_invocation(cmd_line_ref);
-  if (!ci) {
-    LOG(ERROR) << "failed to build CompilerInvocation for cmd: " << idx;
+  unique_ptr<CompilerInstance> inst = build_compiler_instance(cmd);
+  if (!inst) {
+    LOG(ERROR) << "Failed to build CompilerInstance for file " << cmd.Filename;
     return true;
   }
-
-  auto inst =
-      make_unique<CompilerInstance>(make_shared<PCHContainerOperations>());
-  IgnoringDiagConsumer dc;
-  inst->setInvocation(std::move(ci));
-  inst->createDiagnostics(&dc, false);
-  inst->getDiagnostics().setIgnoreAllWarnings(true);
-  inst->setTarget(TargetInfo::CreateTargetInfo(
-      inst->getDiagnostics(), inst->getInvocation().TargetOpts));
-  if (!inst->hasTarget()) {
-    LOG(ERROR) << "cmd " << idx
-               << " does not has target. File: " << cmd.Filename;
-    return true;
-  }
-  inst->createFileManager(llvm::vfs::getRealFileSystem());
-  SourceManager *source_mgr =
-      new SourceManager(inst->getDiagnostics(), inst->getFileManager(), true);
-  inst->setSourceManager(source_mgr);
-  this->update_source_mgr(source_mgr);
+  this->update_source_mgr(&(inst->getSourceManager()));
 
   auto action = make_unique<PViewFrontendAction>(this);
 
@@ -744,46 +699,6 @@ bool ParseTask::index_translation_unit(size_t idx) {
   LOG(INFO) << "Done indexing in " << timer.DurationMicroseconds() / 1000
             << " ms (" << idx << "/" << cmds_.size() << "): " << cmd.Filename;
   return false;
-}
-
-unique_ptr<CompilerInvocation> ParseTask::build_compiler_invocation(
-    llvm::ArrayRef<const char *> args) {
-  IntrusiveRefCntPtr<DiagnosticsEngine> diags(
-      CompilerInstance::createDiagnostics(new DiagnosticOptions,
-                                          new IgnoringDiagConsumer, true));
-
-  clang::driver::Driver driver(args[0], llvm::sys::getDefaultTargetTriple(),
-                               *diags, "whatever title",
-                               llvm::vfs::getRealFileSystem());
-  driver.setCheckInputsExist(false);
-  std::unique_ptr<clang::driver::Compilation> comp(
-      driver.BuildCompilation(args));
-  if (!comp) {
-    LOG(ERROR) << "compilation not built";
-    return nullptr;
-  }
-  const clang::driver::JobList &jobs = comp->getJobs();
-  if (jobs.size() != 1 || !clang::isa<clang::driver::Command>(*jobs.begin())) {
-    LOG(ERROR) << "more than 1 job in a single compilation";
-    return nullptr;
-  }
-
-  const auto &cmd = clang::cast<clang::driver::Command>(*jobs.begin());
-  const auto &creator_name = cmd.getCreator().getName();
-  if (creator_name != string{"clang"} && creator_name != string{"clang++"}) {
-    LOG(ERROR) << "compilation creator not clang/clang++: " << creator_name;
-    return nullptr;
-  }
-  const llvm::opt::ArgStringList &cc_args = cmd.getArguments();
-  auto ci = make_unique<CompilerInvocation>();
-  if (!CompilerInvocation::CreateFromArgs(*ci, cc_args, *diags)) {
-    LOG(ERROR) << "failed to creator compiler invocation from args";
-    return nullptr;
-  }
-
-  ci->getDiagnosticOpts().IgnoreWarnings = true;
-  ci->getFrontendOpts().DisableFree = false;
-  return ci;
 }
 
 /*********************************************

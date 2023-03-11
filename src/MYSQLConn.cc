@@ -1,3 +1,5 @@
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
 #include "MYSQLConn.h"
 #include "Common.h"
 #include "FileUtils.h"

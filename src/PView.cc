@@ -1,3 +1,7 @@
+//=---------------------------------------------------------------------------=/
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
+//=---------------------------------------------------------------------------=/
 #include <atomic>
 #include <memory>
 #include <vector>

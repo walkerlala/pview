@@ -1,3 +1,7 @@
+//=---------------------------------------------------------------------------=/
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
+//=---------------------------------------------------------------------------=/
 #include <unistd.h>
 #include <chrono>
 #include <thread>
@@ -250,7 +254,6 @@ int do_indexing() {
   for (size_t i = 0; i < num_parse_tasks + num_store_tasks; i++) {
     parse_tasks.emplace_back(make_shared<ParseTask>(std::cref(cmds), counter));
   }
-  size_t s = 0;
 
   {
     Timer timer;
@@ -261,11 +264,10 @@ int do_indexing() {
     result_set<ThreadStat> store_results;
     {
       std::unique_lock<std::mutex> lock(ThreadPool::AddTaskGroupMutex());
-      /** Store tasks */
       for (size_t i = 0; i < num_store_tasks; i++) {
-        store_results.insert(
-            thread_pool.add_task(s, &ParseTask::do_store, &(*parse_tasks[s])));
-        s++;
+        size_t idx = i;
+        store_results.insert(thread_pool.add_task(idx, &ParseTask::do_store,
+                                                  &(*parse_tasks[idx])));
       }
     }
 
@@ -273,20 +275,21 @@ int do_indexing() {
      * Parse threads
      */
     result_set<ThreadStat> parse_results;
+    size_t parse_thread_start_off = num_store_tasks;
     {
       std::unique_lock<std::mutex> lock(ThreadPool::AddTaskGroupMutex());
       for (size_t i = 0; i < num_parse_tasks; i++) {
-        parse_results.insert(
-            thread_pool.add_task(s, &ParseTask::do_parse, &(*parse_tasks[s])));
-        s++;
+        size_t idx = parse_thread_start_off + i;
+        parse_results.insert(thread_pool.add_task(idx, &ParseTask::do_parse,
+                                                  &(*parse_tasks[idx])));
       }
     }
-    ASSERT(s == (num_parse_tasks + num_store_tasks));
 
     /** Wait for parse thread finished */
     {
       std::vector<ThreadStat> stats;
       parse_results.get_all_with_except(stats);
+      parse_results.clear();
       LOG(INFO) << "Done all indexing in "
                 << timer.DurationMicroseconds() / 1000 << " ms.";
     }
@@ -295,18 +298,33 @@ int do_indexing() {
     IndexQueue *queue = ctx->get_index_queue();
     queue->set_stop();
 
+    /**
+     * If there are too many queued statements, start extra threads to help.
+     * Too more threads would help that much, but might overloaded the backend
+     * mysql server, so 1/2 would be fine.
+     */
+    if (queue->get_num_stmts() >= 100_KB && (num_parse_tasks / 2) > 0) {
+      LOG(INFO) << "Too many SQL stmts in queue. Start "
+                << (num_parse_tasks / 2) << " extra store tasks";
+      std::unique_lock<std::mutex> lock(ThreadPool::AddTaskGroupMutex());
+      for (size_t i = 0; i < num_parse_tasks / 2; i++) {
+        size_t idx = parse_thread_start_off + i;
+        parse_results.insert(thread_pool.add_task(idx, &ParseTask::do_store,
+                                                  &(*parse_tasks[idx])));
+      }
+    }
+
     /** Print SQL stmts stats while store threads are still working on it */
     {
-      IndexQueue *iq = ctx->get_index_queue();
       LOG(INFO) << "Waiting for store threads to finish"
                 << ", num of SQL stmts to be stored into database: "
-                << iq->get_num_stmts();
+                << queue->get_num_stmts();
 
       using namespace std::chrono_literals;
-      while (iq->get_num_stmts() >= 1_KB) {
+      while (queue->get_num_stmts() >= 1_KB) {
         std::this_thread::sleep_for(1s);
         LOG_EVERY_N(INFO, 5) << "num of SQL stmts to be stored into database: "
-                             << iq->get_num_stmts();
+                             << queue->get_num_stmts();
       }
     }
 
@@ -314,7 +332,17 @@ int do_indexing() {
     {
       std::vector<ThreadStat> stats;
       store_results.get_all_with_except(stats);
+      store_results.clear();
     }
+
+    /** Join extra join tasks */
+    if (parse_results.size()) {
+      std::vector<ThreadStat> stats;
+      parse_results.get_all_with_except(stats);
+      parse_results.clear();
+    }
+
+    LOG(INFO) << "Done indexing";
   }
   return 0;
 }
@@ -359,7 +387,6 @@ static void query_func_call_usr_qualified_might_throw_using_caller_usr(
     caller_might_throw.push_back(stmt_result->getInt(3));
   }
 }
-
 
 /** Query caller usr from the func_calls table using callee's qualified name */
 static void query_func_call_caller_usr_using_qualified(
@@ -684,7 +711,6 @@ int do_query_throwpath() {
   }
   LOG(INFO) << "---------- END ---------";
   return 0;
-
 }
 
 int do_query() {

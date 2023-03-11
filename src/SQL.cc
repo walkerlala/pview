@@ -1,3 +1,7 @@
+//=---------------------------------------------------------------------------=/
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
+//=---------------------------------------------------------------------------=/
 #include "SQL.h"
 
 namespace pview {
@@ -41,6 +45,12 @@ VALUES
 
 const char *SQL_is_file_exists = R""""(
 SELECT COUNT(1) FROM `pview_index_database`.`filepaths`
+WHERE filepath = "{arg_filepath}"
+)"""";
+
+const char *SQL_get_file_mtime = R""""(
+SELECT UNIX_TIMESTAMP(MAX(create_time))
+FROM `pview_index_database`.`filepaths`
 WHERE filepath = "{arg_filepath}"
 )"""";
 

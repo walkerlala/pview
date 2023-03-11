@@ -1,12 +1,22 @@
+//=---------------------------------------------------------------------------=/
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
+//=---------------------------------------------------------------------------=/
 #include <optional>
 #include <string>
 
 namespace pview {
+/** return true if file @file is readable */
+bool check_file_readable(const std::string &file);
+
 /** return true if file @file is writable */
-bool check_file_writable(const std::string file);
+bool check_file_writable(const std::string &file);
 
 /** return true if directory @dir is writable */
 bool check_dir_writable(const std::string &dir);
+
+/** return true if @file exists in the filesystem */
+bool check_file_exists(const std::string &file);
 
 /** return true if @port is in use by some process */
 bool check_port_in_use(int port);

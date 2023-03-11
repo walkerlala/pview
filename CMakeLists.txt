@@ -166,12 +166,22 @@ FUNCTION(ADD_COMMON_LIB_OPTIONS target)
   TARGET_LINK_LIBRARIES(${target} PRIVATE crypto)
 
   # statically link mysql-connector
-  TARGET_INCLUDE_DIRECTORIES(${target} SYSTEM PRIVATE ${PROJECT_ROOT}/install/mysql-connector/include/jdbc/)
-  TARGET_LINK_LIBRARIES(${target} PRIVATE ${PROJECT_ROOT}/extra/mysql-connector/mysql-connector-cpp-8.0.13/build/libmysqlcppconn8-static.a)
-  TARGET_LINK_LIBRARIES(${target} PRIVATE ${PROJECT_ROOT}/extra/mysql-connector/mysql-connector-cpp-8.0.13/build/jdbc/driver/libmysqlcppconn-static.a)
-  TARGET_LINK_LIBRARIES(${target} PRIVATE ${PROJECT_ROOT}/extra/mysql-connector/mysql-connector-cpp-8.0.13/build/jdbc/install/lib/libmysqlcppconn-static.a)
-  #TARGET_LINK_DIRECTORIES(${target} PRIVATE ${PROJECT_ROOT}/install/mysql-connector/lib64/)
-  #TARGET_LINK_LIBRARIES(${target} PRIVATE mysqlcppconn)
+  TARGET_INCLUDE_DIRECTORIES(
+    ${target}
+    SYSTEM PRIVATE
+    ${PROJECT_ROOT}/extra/mysql-connector/mysql-connector-cpp-8.0.13/build/jdbc/install/include/jdbc)
+  TARGET_LINK_LIBRARIES(
+    ${target}
+    PRIVATE
+    ${PROJECT_ROOT}/extra/mysql-connector/mysql-connector-cpp-8.0.13/build/libmysqlcppconn8-static.a)
+  TARGET_LINK_LIBRARIES(
+    ${target}
+    PRIVATE
+    ${PROJECT_ROOT}/extra/mysql-connector/mysql-connector-cpp-8.0.13/build/jdbc/driver/libmysqlcppconn-static.a)
+  TARGET_LINK_LIBRARIES(
+    ${target}
+    PRIVATE
+    ${PROJECT_ROOT}/extra/mysql-connector/mysql-connector-cpp-8.0.13/build/jdbc/install/lib/libmysqlcppconn-static.a)
 ENDFUNCTION()
 
 # LLVM / CLANG linking.
@@ -245,11 +255,14 @@ ENDFUNCTION()
 
 SET(
   PVIEW_SOURCES
+  ${PROJECT_ROOT}/src/ClangCompiler.cc
+  ${PROJECT_ROOT}/src/ExceptionAnalyzer.cc
   ${PROJECT_ROOT}/src/FileUtils.cc
+  ${PROJECT_ROOT}/src/IncludeAnalyzer.cc
   ${PROJECT_ROOT}/src/IndexCtx.cc
   ${PROJECT_ROOT}/src/IndexQueue.cc
-  ${PROJECT_ROOT}/src/MYSQLMgr.cc
   ${PROJECT_ROOT}/src/MYSQLConn.cc
+  ${PROJECT_ROOT}/src/MYSQLMgr.cc
   ${PROJECT_ROOT}/src/Main.cc
   ${PROJECT_ROOT}/src/PView.cc
   ${PROJECT_ROOT}/src/ParseTask.cc
@@ -257,7 +270,6 @@ SET(
   ${PROJECT_ROOT}/src/StrUtils.cc
   ${PROJECT_ROOT}/src/ThreadPool.cc
   ${PROJECT_ROOT}/src/siphash.cc
-  ${PROJECT_ROOT}/src/ExceptionAnalyzer.cc
 )
 SET(PVIEW_EXECUTABLE_NAME pview)
 ADD_EXECUTABLE(${PVIEW_EXECUTABLE_NAME} ${PVIEW_SOURCES})

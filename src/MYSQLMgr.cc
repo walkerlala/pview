@@ -1,3 +1,7 @@
+//=---------------------------------------------------------------------------=/
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
+//=---------------------------------------------------------------------------=/
 #include <signal.h>   /* SIGKILL */
 #include <sys/wait.h> /* waitpid() */
 #include <unistd.h>

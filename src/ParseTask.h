@@ -1,3 +1,7 @@
+//=---------------------------------------------------------------------------=/
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
+//=---------------------------------------------------------------------------=/
 #pragma once
 
 #include <memory>
@@ -34,7 +38,7 @@ constexpr const char *kPViewFuncCallTbl = "func_calls";
  *        -> PViewConsumer translate every accepted record and then
  *           invoke ParseTask's interface to store indexed records
  ******************************************************************************/
-class ParseTask : public std::enable_shared_from_this<ParseTask> {
+class ParseTask {
  public:
   ParseTask(const std::vector<clang::tooling::CompileCommand> cmds,
             const std::shared_ptr<std::atomic_uint64_t> &counter)
@@ -97,15 +101,6 @@ class ParseTask : public std::enable_shared_from_this<ParseTask> {
   bool index_translation_unit(size_t idx);
 
   /**
-   * Generate a clang::CompilerInvocation, which could be used to invoke
-   * the clang compiler to index a single file.
-   *
-   * @param args    Compiler parameters from compile_commands.json
-   */
-  std::unique_ptr<clang::CompilerInvocation> build_compiler_invocation(
-      llvm::ArrayRef<const char *> args);
-
-  /**
    * Query the backend database for file id of @filepath
    *
    * If @filepath does not exist in the database, assign a new one for it
@@ -115,19 +110,15 @@ class ParseTask : public std::enable_shared_from_this<ParseTask> {
   int64_t query_or_assign_file_id(const std::string &filepath);
 
   /**
-   * Whether @filepath need to be re-index provided that the last modify
-   * timestamp is @file_mtime.
+   * Get last modification time of @filepath from the backend database
    *
-   * If the timestamp in backend database is equal or newer than @file_mtime,
-   * then this file does not need to be re-index.
-   *
-   * @returns true if need to be re-index; otherwise false.
+   * If @filepath does not exists in the db, return 0
    *
    * Note:
-   *  @file_mtime is not necessary the lastest modification time of @filepath,
+   *  Return value is not necessary the lastest modification time of @filepath,
    *  but could be the lastest modification time of the files it includes.
    */
-  bool is_file_need_update(const std::string &filepath, int64_t file_mtime);
+  int64_t get_file_last_mtime(const std::string &filepath);
 
   /**
    * Unconditinally update @filepath using a @filepath_id and @timestamp

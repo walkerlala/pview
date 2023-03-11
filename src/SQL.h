@@ -1,3 +1,7 @@
+//=---------------------------------------------------------------------------=/
+// Copyright The pview authors
+// SPDX-License-Identifier: Apache-2.0
+//=---------------------------------------------------------------------------=/
 #pragma once
 
 namespace pview {
@@ -9,6 +13,7 @@ extern const char *SQL_filepaths_create;
 extern const char *SQL_query_filepath_id;
 extern const char *SQL_replace_filepath;
 extern const char *SQL_is_file_exists;
+extern const char *SQL_get_file_mtime;
 extern const char *SQL_is_file_obselete;
 extern const char *SQL_max_filepath_id;
 
