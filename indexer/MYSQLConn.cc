@@ -175,8 +175,9 @@ std::unique_ptr<sql::Statement> MYSQLConn::create_mysql_stmt() const {
   return res;
 }
 
-int MYSQLConn::execute_stmt(const std::string &sql) const {
-  auto stmt = create_mysql_stmt();
+int MYSQLConn::execute_dml_impl(sql::Statement *stmt,
+                                const std::string &sql) const {
+  ASSERT(stmt);
   size_t cnt = 1;
   for (; cnt < FLAGS_mysql_insert_dead_lock_retry_count; ++cnt) {
     try {
@@ -206,9 +207,43 @@ int MYSQLConn::execute_stmt(const std::string &sql) const {
   return 0;
 }
 
-int MYSQLConn::ddl(const std::string &sql) const { return execute_stmt(sql); }
+int MYSQLConn::execute_dml(const std::string &sql) const {
+  auto stmt = create_mysql_stmt();
+  if (!stmt) {
+    return 1;
+  }
+  return execute_dml_impl(stmt.get(), sql);
+}
 
-int MYSQLConn::dml(const std::string &sql) const { return execute_stmt(sql); }
+int MYSQLConn::ddl(const std::string &sql) const { return execute_dml(sql); }
+
+int MYSQLConn::dml(const std::string &sql) const { return execute_dml(sql); }
+
+int MYSQLConn::multi_dml(const std::vector<std::string> &stmts) const {
+  auto stmt = create_mysql_stmt();
+  if (!stmt) {
+    return 1;
+  }
+  if (execute_dml_impl(stmt.get(), "start transaction")) {
+    return 1;
+  }
+
+  bool should_rollback = 0;
+  for (const auto &sql : stmts) {
+    if (execute_dml_impl(stmt.get(), sql)) {
+      should_rollback = 1;
+      break;
+    }
+  }
+
+  int err = 0;
+  if (should_rollback) {
+    err = execute_dml_impl(stmt.get(), "ROLLBACK");
+  } else {
+    err = execute_dml_impl(stmt.get(), "COMMIT");
+  }
+  return (!should_rollback && !err);
+}
 
 std::unique_ptr<sql::ResultSet> MYSQLConn::query(const std::string &sql) const {
   auto stmt = create_mysql_stmt();

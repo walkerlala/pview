@@ -51,6 +51,9 @@ class ParseTask {
     source_mgr_ = source_mgr;
   }
 
+  /** The source file that the ParseTask is parsing&compiling at this time */
+  const std::string &get_current_filepath() const { return current_filepath_; }
+
   /** return true on error, otherwise false */
   bool gen_source_location(Location &dst, clang::SourceLocation loc);
 
@@ -64,6 +67,9 @@ class ParseTask {
 
   /** Send update info to background store threads */
   int send_indexed_result();
+
+  /** Clear cached symbols and SQL stmts for the current translation unit */
+  void clear_current_translation_unit_result();
 
  protected:
   /**
@@ -417,5 +423,49 @@ class PViewPPCallBack : public clang::PPCallbacks {
 
  protected:
   ParseTask *const parse_task_;
+};
+
+/******************************************************************************
+ * Diagnostic consumer which log all error diagnostic messages from the compiler
+ *
+ ******************************************************************************/
+class PViewDiagConsumer : public clang::DiagnosticConsumer {
+ public:
+  PViewDiagConsumer(ParseTask *parse_task)
+      : clang::DiagnosticConsumer(), parse_task_(parse_task), num_err_(0) {}
+  ~PViewDiagConsumer() = default;
+
+  void HandleDiagnostic(clang::DiagnosticsEngine::Level DiagLevel,
+                        const clang::Diagnostic &Info) override;
+
+  /**
+   * Bookkeeping of number errors seen on the flight.
+   * The clang::DiagnosticConsumer::getNumErrors() is not accurate if we
+   * HandleDiagnostic() ourself.
+   */
+  int64_t num_errors() const { return num_err_; }
+  void increase_error() { num_err_++; }
+
+ protected:
+  ParseTask *const parse_task_;
+  int64_t num_err_;
+};
+
+/******************************************************************************
+ * RAII style guard to clean symbols for a translation unit after the ParseTask
+ * has completed parsing&compiling a single translation unit, whether there is
+ * error or not.
+ *
+ ******************************************************************************/
+class ParseTaskTranslationUnitGuard {
+ public:
+  ParseTaskTranslationUnitGuard(ParseTask *parse_task)
+      : parse_task_(parse_task) {}
+  ~ParseTaskTranslationUnitGuard() {
+    parse_task_->clear_current_translation_unit_result();
+  }
+
+ protected:
+  ParseTask *parse_task_;
 };
 }  // namespace pview

@@ -16,7 +16,8 @@ namespace pview {
  * @return nullptr if failed
  */
 std::unique_ptr<clang::CompilerInstance> build_compiler_instance(
-    const clang::tooling::CompileCommand &cmd);
+    const clang::tooling::CompileCommand &cmd,
+    const std::shared_ptr<clang::DiagnosticConsumer> &diagnostic_consumer);
 
 /** Remove meaningless dot from filepath */
 std::string normalize_path(llvm::StringRef path);

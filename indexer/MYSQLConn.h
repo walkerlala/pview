@@ -92,6 +92,11 @@ class MYSQLConn : public std::enable_shared_from_this<MYSQLConn> {
 
   int ddl(const std::string &sql) const;
   int dml(const std::string &sql) const;
+  /**
+   * Multi DML statements within a single transaction, so that they all failed
+   * or succeed.
+   */
+  int multi_dml(const std::vector<std::string> &stmts) const;
   std::unique_ptr<sql::ResultSet> query(const std::string &sql) const;
 
   std::shared_ptr<MYSQLPS> create_prepare_stmt(const std::string &sql);
@@ -99,7 +104,8 @@ class MYSQLConn : public std::enable_shared_from_this<MYSQLConn> {
  protected:
   MYSQLConn(const MYSQLConnConf &conf) : conf_(conf) {}
   std::unique_ptr<sql::Statement> create_mysql_stmt() const;
-  int execute_stmt(const std::string &stmt) const;
+  int execute_dml_impl(sql::Statement *stmt, const std::string &sql) const;
+  int execute_dml(const std::string &stmt) const;
 
  protected:
   const MYSQLConnConf conf_;

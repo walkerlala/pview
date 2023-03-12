@@ -2,12 +2,14 @@
 // Copyright The pview authors
 // SPDX-License-Identifier: Apache-2.0
 //=---------------------------------------------------------------------------=/
-#include "ClangCompiler.h"
-#include "FileUtils.h"
+#include <clang/Basic/Diagnostic.h>
 
 #include <fmt/format.h>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+
+#include "ClangCompiler.h"
+#include "FileUtils.h"
 
 using std::make_shared;
 using std::make_unique;
@@ -19,6 +21,8 @@ using std::vector;
 using clang::ASTConsumer;
 using clang::CompilerInstance;
 using clang::CompilerInvocation;
+using clang::Diagnostic;
+using clang::DiagnosticConsumer;
 using clang::DiagnosticOptions;
 using clang::DiagnosticsEngine;
 using clang::FileEntry;
@@ -95,7 +99,8 @@ static shared_ptr<CompilerInvocation> build_compiler_invocation(
  * @return nullptr if failed
  */
 unique_ptr<CompilerInstance> build_compiler_instance(
-    const CompileCommand &cmd) {
+    const CompileCommand &cmd,
+    const shared_ptr<DiagnosticConsumer> &diagnostic_consumer) {
   auto ci = build_compiler_invocation(cmd);
   if (!ci) {
     LOG(ERROR) << "failed to build CompilerInvocation for " << cmd.Filename;
@@ -105,7 +110,13 @@ unique_ptr<CompilerInstance> build_compiler_instance(
   auto inst =
       make_unique<CompilerInstance>(make_shared<PCHContainerOperations>());
   inst->setInvocation(ci);
-  inst->createDiagnostics(new IgnoringDiagConsumer(), /*take ownership*/ true);
+  if (!diagnostic_consumer) {
+    inst->createDiagnostics(new IgnoringDiagConsumer(),
+                            /*take ownership*/ true);
+  } else {
+    inst->createDiagnostics(diagnostic_consumer.get(),
+                            /*take ownership*/ false);
+  }
   inst->getDiagnostics().setIgnoreAllWarnings(true);
   inst->setTarget(TargetInfo::CreateTargetInfo(
       inst->getDiagnostics(), inst->getInvocation().TargetOpts));
