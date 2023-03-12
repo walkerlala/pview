@@ -194,7 +194,7 @@ void ParseTask::append_indexed_func_defs_value(std::ostringstream &oss,
 
   /* clang-format off */
   const auto &stmt = fmt::format(
-      SQL_func_def_insert_param,
+      PCTX->get_sql_func_def_insert_param(),
       fmt::arg("arg_func_def_id", func_def_id),
       fmt::arg("arg_create_time", current_time_),
       fmt::arg("arg_usr", usr),
@@ -222,7 +222,7 @@ std::string ParseTask::gen_batch_update_func_defs_stmt(size_t *start) {
     }
 
     if (appended == 0) {
-      oss << SQL_func_def_insert_header;
+      oss << PCTX->get_sql_func_def_insert_header();
     } else if (appended != 0) {
       oss << ", ";
     }
@@ -246,7 +246,7 @@ void ParseTask::append_indexed_func_calls_value(std::ostringstream &oss,
 
   /* clang-format off */
   const auto &stmt = fmt::format(
-      SQL_func_call_insert_param,
+      PCTX->get_sql_func_call_insert_param(),
       fmt::arg("arg_func_call_id", func_call_id),
       fmt::arg("arg_create_time", current_time_),
       fmt::arg("arg_caller_usr", caller_usr),
@@ -275,7 +275,7 @@ std::string ParseTask::gen_batch_update_func_calls_stmt(size_t *start) {
       continue;
     }
     if (appended == 0) {
-      oss << SQL_func_call_insert_header;
+      oss << PCTX->get_sql_func_call_insert_header();
     } else if (appended != 0) {
       oss << ", ";
     }
@@ -310,7 +310,7 @@ int ParseTask::send_indexed_result() {
   /** filepaths */
   /* clang-format off */
   std::string replace_fn_stmt = fmt::format(
-      SQL_replace_filepath,
+      PCTX->get_sql_replace_filepath(),
       fmt::arg("arg_filepath_id", current_filepath_id_),
       fmt::arg("arg_filepath", current_filepath_),
       fmt::arg("arg_create_time", current_time_));
@@ -334,14 +334,15 @@ int ParseTask::update_indexed_file(const std::string &filepath,
 
   /* clang-format off */
   const std::string &replace_stmt = fmt::format(
-      SQL_replace_filepath,
+      PCTX->get_sql_replace_filepath(),
       fmt::arg("arg_filepath_id", filepath_id),
       fmt::arg("arg_filepath", filepath),
       fmt::arg("arg_create_time", timestamp));
   /* clang-format on */
 
   {
-    MYSQLTableLock lk(mysql_conn_, kPViewIndexDB, kPViewFileNameTbl);
+    MYSQLTableLock lk(mysql_conn_, kPViewIndexDB,
+                      PCTX->get_filepath_tbl_name());
     if (lk.lock()) {
       LOG(WARNING) << "Fail to lock filepaths table in mysql";
       return 1;
@@ -364,9 +365,10 @@ int64_t ParseTask::query_or_assign_file_id(const std::string &filepath) {
   ASSERT(mysql_conn_);
   int64_t fn_id = -1;
   do {
-    auto stmt =
-        fmt::format(SQL_query_filepath_id, fmt::arg("arg_filepath", filepath));
-    MYSQLTableLock lk(mysql_conn_, kPViewIndexDB, kPViewFileNameTbl);
+    auto stmt = fmt::format(PCTX->get_sql_query_filepath_id(),
+                            fmt::arg("arg_filepath", filepath));
+    MYSQLTableLock lk(mysql_conn_, kPViewIndexDB,
+                      PCTX->get_filepath_tbl_name());
     if (lk.lock()) {
       LOG(WARNING) << "Fail to lock filepaths table in mysql";
       break;
@@ -390,7 +392,7 @@ int64_t ParseTask::query_or_assign_file_id(const std::string &filepath) {
 
     /* clang-format off */
     const std::string &replace_stmt =
-        fmt::format(SQL_replace_filepath,
+        fmt::format(PCTX->get_sql_replace_filepath(),
                     fmt::arg("arg_filepath_id", fn_id),
                     fmt::arg("arg_filepath", filepath),
                     fmt::arg("arg_create_time", file_mtime));
@@ -413,8 +415,8 @@ int64_t ParseTask::query_or_assign_file_id(const std::string &filepath) {
 }
 
 int64_t ParseTask::get_file_last_mtime(const std::string &filepath) {
-  const auto &stmt =
-      fmt::format(SQL_get_file_mtime, fmt::arg("arg_filepath", filepath));
+  const auto &stmt = fmt::format(PCTX->get_sql_get_file_mtime(),
+                                 fmt::arg("arg_filepath", filepath));
   auto stmt_result = mysql_conn_->query(stmt);
   if (!stmt_result) {
     return 0;

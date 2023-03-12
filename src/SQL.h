@@ -5,7 +5,18 @@
 #pragma once
 
 namespace pview {
+/** If modified these names, please modify SQL.cc/SQL.h */
+constexpr const char *kPViewIndexDB = "pview_index_database";
+
 extern const char *SQL_create_pview_db;
+/**
+ * MYSQL table projects
+ */
+extern const char *SQL_projects_create;
+extern const char *SQL_get_project_id;
+extern const char *SQL_max_project_id;
+extern const char *SQL_insert_new_project;
+
 /**
  * MYSQL table for filename
  */
@@ -16,11 +27,6 @@ extern const char *SQL_is_file_exists;
 extern const char *SQL_get_file_mtime;
 extern const char *SQL_is_file_obselete;
 extern const char *SQL_max_filepath_id;
-
-/**
- * MYSQL table for ClassDef
- */
-extern const char *SQL_class_def_create;
 
 /**
  * MYSQL table for FuncDef

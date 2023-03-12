@@ -15,4 +15,6 @@ bool string_ends_with(const std::string &str, const std::string &pattern);
 std::vector<std::string> split_string(const std::string &str, char delimiter);
 std::vector<std::string> split_string(const std::string &str,
                                       const std::string &delimiter);
+std::string replace_string(std::string target, const std::string &search,
+                           const std::string &replace);
 }  // namespace pview

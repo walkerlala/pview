@@ -221,20 +221,9 @@ int get_mysqld_setting(MYSQLDConf &conf) {
 
 /** Entry point of main indexing functionality */
 int do_indexing() {
-  std::string json_dir = FLAGS_root;
-  std::string err_msg;
-  // unique_ptr<CompilationDatabase> cdb =
-  // CompilationDatabase::loadFromDirectory(json_dir, err_msg);
-  unique_ptr<CompilationDatabase> cdb =
-      CompilationDatabase::autoDetectFromDirectory(json_dir, err_msg);
-  if (err_msg.size() || !cdb) {
-    LOG(ERROR) << "Fail to load compilation database from `" << json_dir
-               << "`: " << err_msg;
-    return 1;
-  }
   IndexCtx *ctx = IndexCtx::get_instance();
-  ctx->set_project_root(FLAGS_root);
-  LOG(INFO) << "Project root: " << FLAGS_root;
+  CompilationDatabase *cdb = ctx->get_comile_commands();
+  ASSERT(cdb);
 
   vector<CompileCommand> cmds = cdb->getAllCompileCommands();
 
@@ -300,8 +289,8 @@ int do_indexing() {
 
     /**
      * If there are too many queued statements, start extra threads to help.
-     * Too more threads would help that much, but might overloaded the backend
-     * mysql server, so 1/2 would be fine.
+     * Too many threads wouldn't help that much, but might overloaded the
+     * backend database server. So 1/2 extra parse thread would be fine.
      */
     if (queue->get_num_stmts() >= 100_KB && (num_parse_tasks / 2) > 0) {
       LOG(INFO) << "Too many SQL stmts in queue. Start "
@@ -316,10 +305,7 @@ int do_indexing() {
 
     /** Print SQL stmts stats while store threads are still working on it */
     {
-      LOG(INFO) << "Waiting for store threads to finish"
-                << ", num of SQL stmts to be stored into database: "
-                << queue->get_num_stmts();
-
+      LOG(INFO) << "Waiting for store threads to finish";
       using namespace std::chrono_literals;
       while (queue->get_num_stmts() >= 1_KB) {
         std::this_thread::sleep_for(1s);
@@ -351,8 +337,8 @@ int do_indexing() {
 static std::vector<std::string> query_func_def_usr_using_qualified(
     const shared_ptr<MYSQLConn> &mysql_conn, const std::string &qualified) {
   std::vector<std::string> all_caller_usr;
-  const auto &stmt =
-      fmt::format(SQL_query_func_def_usr, fmt::arg("arg_qualified", qualified));
+  const auto &stmt = fmt::format(PCTX->get_sql_query_func_def_usr(),
+                                 fmt::arg("arg_qualified", qualified));
   auto stmt_result = mysql_conn->query(stmt);
   while (stmt_result->next()) {
     all_caller_usr.push_back(stmt_result->getString(1));
@@ -364,7 +350,7 @@ static std::vector<std::string> query_func_def_usr_using_qualified(
 static void query_func_call_usr_qualified_using_caller_usr(
     const shared_ptr<MYSQLConn> &mysql_conn, std::vector<std::string> &fc_usr,
     std::vector<std::string> &fc_qualified, const std::string &caller_usr) {
-  const auto &stmt = fmt::format(SQL_query_func_call_info,
+  const auto &stmt = fmt::format(PCTX->get_sql_query_func_call_info(),
                                  fmt::arg("arg_caller_usr", caller_usr));
   auto stmt_result = mysql_conn->query(stmt);
   while (stmt_result->next()) {
@@ -378,8 +364,9 @@ static void query_func_call_usr_qualified_might_throw_using_caller_usr(
     const shared_ptr<MYSQLConn> &mysql_conn, std::vector<std::string> &fc_usr,
     std::vector<std::string> &fc_qualified,
     std::vector<int> &caller_might_throw, const std::string &caller_usr) {
-  const auto &stmt = fmt::format(SQL_query_func_call_info_with_throw,
-                                 fmt::arg("arg_caller_usr", caller_usr));
+  const auto &stmt =
+      fmt::format(PCTX->get_sql_query_func_call_info_with_throw(),
+                  fmt::arg("arg_caller_usr", caller_usr));
   auto stmt_result = mysql_conn->query(stmt);
   while (stmt_result->next()) {
     fc_usr.push_back(stmt_result->getString(1));
@@ -392,8 +379,9 @@ static void query_func_call_usr_qualified_might_throw_using_caller_usr(
 static void query_func_call_caller_usr_using_qualified(
     const shared_ptr<MYSQLConn> &mysql_conn,
     std::vector<std::string> &caller_usr, const std::string &qualified) {
-  const auto &stmt = fmt::format(SQL_query_caller_usr_using_qualified,
-                                 fmt::arg("arg_qualified", qualified));
+  const auto &stmt =
+      fmt::format(PCTX->get_sql_query_caller_usr_using_qualified(),
+                  fmt::arg("arg_qualified", qualified));
   auto stmt_result = mysql_conn->query(stmt);
   while (stmt_result->next()) {
     caller_usr.push_back(stmt_result->getString(1));
@@ -406,7 +394,7 @@ static void query_func_call_caller_usr_using_qualified(
  */
 static std::string query_func_def_qualified_using_func_def_usr(
     const shared_ptr<MYSQLConn> &mysql_conn, const std::string &func_def_usr) {
-  const auto &stmt = fmt::format(SQL_query_func_def_using_qualified,
+  const auto &stmt = fmt::format(PCTX->get_sql_query_func_def_using_qualified(),
                                  fmt::arg("arg_usr", func_def_usr));
   auto stmt_result = mysql_conn->query(stmt);
   while (stmt_result->next()) {
@@ -746,24 +734,75 @@ int do_prepare() {
     return 1;
   }
 
+  /** MYSQL table for projects */
+  if (mysql_conn->ddl(SQL_projects_create)) {
+    return 1;
+  }
+
+  /** get associated project id for project root */
+  int64_t project_id = 0;
+  const std::string &project_root = ctx->get_project_root();
+  ASSERT(project_root.size());
+  const std::string &query_project_id = fmt::format(
+      SQL_get_project_id, fmt::arg("arg_project_root", project_root));
+  auto project_id_result = mysql_conn->query(query_project_id);
+  while (project_id_result->next()) {
+    project_id = project_id_result->getInt(1);
+    LOG(INFO) << "Found existing project with id " << project_id;
+    break;
+  }
+  if (project_id <= 0) {
+    /**
+     * Project not exists in meta table, i.e., new project to index.
+     * Assign a new project id.
+     */
+    auto max_project_id_result = mysql_conn->query(SQL_max_project_id);
+    int64_t current_max_project_id = -1;
+    while (max_project_id_result->next()) {
+      current_max_project_id = max_project_id_result->getInt(1);
+      LOG(INFO) << "Current max project id " << current_max_project_id;
+      break;
+    }
+    if (current_max_project_id <= 0) {
+      project_id = 1;
+    } else {
+      project_id = current_max_project_id + 1;
+    }
+
+    const std::string &insert_new_project = fmt::format(
+        SQL_insert_new_project, fmt::arg("arg_project_id", project_id),
+        fmt::arg("arg_project_root", project_root));
+    if (mysql_conn->dml(insert_new_project)) {
+      LOG(ERROR) << "Failed to insert new project into meta table"
+                 << ", project root: " << project_root
+                 << ", new project id: " << project_id;
+      return 1;
+    }
+  }
+  ctx->set_project_id(project_id);
+  ctx->set_project_table_names(fmt::format("filepaths_{}", project_id),
+                               fmt::format("func_definitions_{}", project_id),
+                               fmt::format("func_calls_{}", project_id));
+  LOG(INFO) << "Using project id " << project_id << " for " << project_root;
+
   /** MYSQL table for filepath */
-  if (mysql_conn->ddl(SQL_filepaths_create)) {
+  if (mysql_conn->ddl(PCTX->get_sql_filepaths_create())) {
     return 1;
   }
 
   /** MYSQL table for FuncDef */
-  if (mysql_conn->ddl(SQL_func_def_create)) {
+  if (mysql_conn->ddl(PCTX->get_sql_func_def_create())) {
     return 1;
   }
 
   /** MYSQL table for FuncCall */
-  if (mysql_conn->ddl(SQL_func_call_create)) {
+  if (mysql_conn->ddl(PCTX->get_sql_func_call_create())) {
     return 1;
   }
 
   /** max file path id */
   int64_t max_filepath_id = 1;
-  auto max_fn_id_result = mysql_conn->query(SQL_max_filepath_id);
+  auto max_fn_id_result = mysql_conn->query(PCTX->get_sql_max_filepath_id());
   while (max_fn_id_result->next()) {
     max_filepath_id = max_fn_id_result->getInt(1);
     LOG(INFO) << "Current max file path id " << max_filepath_id
@@ -773,7 +812,8 @@ int do_prepare() {
 
   /** max func def id */
   int64_t max_func_def_id = 1;
-  auto max_func_def_id_result = mysql_conn->query(SQL_max_func_def_id);
+  auto max_func_def_id_result =
+      mysql_conn->query(PCTX->get_sql_max_func_def_id());
   while (max_func_def_id_result->next()) {
     max_func_def_id = max_func_def_id_result->getInt(1);
     LOG(INFO) << "Current max func def id " << max_func_def_id
@@ -783,7 +823,8 @@ int do_prepare() {
 
   /** max func call id */
   int64_t max_func_call_id = 1;
-  auto max_func_call_id_result = mysql_conn->query(SQL_max_func_call_id);
+  auto max_func_call_id_result =
+      mysql_conn->query(PCTX->get_sql_max_func_call_id());
   while (max_func_call_id_result->next()) {
     max_func_call_id = max_func_call_id_result->getInt(1);
     LOG(INFO) << "Current max func call id: " << max_func_call_id
@@ -835,6 +876,28 @@ int do_main(int argc, char *argv[]) {
   const size_t num_store_tasks = std::max(2ul, max_dop / 8);
   const size_t num_parse_tasks = max_dop - num_store_tasks;
   ctx->set_max_dop(num_parse_tasks, num_store_tasks);
+
+  /**
+   * Check compile_commands.json and detect project root
+   */
+  {
+    std::string json_dir = FLAGS_root;
+    std::string err_msg;
+    unique_ptr<CompilationDatabase> cdb =
+        CompilationDatabase::autoDetectFromDirectory(json_dir, err_msg);
+    if (err_msg.size() || !cdb) {
+      LOG(ERROR) << "Fail to load compilation database from `" << json_dir
+                 << "`: " << err_msg;
+      return 1;
+    }
+    if (!cdb->getAllCompileCommands().size()) {
+      LOG(ERROR) << "None compile command found in " << FLAGS_root;
+      return 1;
+    }
+    ctx->set_project_root(FLAGS_root);
+    ctx->set_compile_commands(std::move(cdb));
+    LOG(INFO) << "Project root: " << FLAGS_root;
+  }
 
   /**
    * Spawn our own managed mysqld subprocess if not using external mysqld

@@ -16,12 +16,6 @@ class PViewConsumer;
 class PViewPPCallBack;
 class ParseTask;
 
-/** If modified these names, please modify SQL.cc/SQL.h */
-constexpr const char *kPViewIndexDB = "pview_index_database";
-constexpr const char *kPViewFileNameTbl = "filepaths";
-constexpr const char *kPViewFuncDefTbl = "func_definitions";
-constexpr const char *kPViewFuncCallTbl = "func_calls";
-
 /******************************************************************************
  * Indexing service which
  *  - drive the compilation of every translation unit, and (parse task)

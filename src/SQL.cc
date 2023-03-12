@@ -10,11 +10,43 @@ CREATE DATABASE IF NOT EXISTS `pview_index_database`
 )"""";
 
 /**
+ * MYSQL table projects
+ */
+const char *SQL_projects_create = R""""(
+CREATE TABLE IF NOT EXISTS
+`pview_index_database`.`projects` (
+  project_id BIGINT,
+  project_root VARCHAR(2048),
+  PRIMARY KEY (project_id),
+  KEY k_project_root (project_root)
+) CHARSET latin1 COLLATE latin1_bin ENGINE=InnoDB;
+)"""";
+
+const char *SQL_get_project_id = R""""(
+SELECT project_id FROM `pview_index_database`.`projects`
+WHERE project_root = "{arg_project_root}"
+)"""";
+
+const char *SQL_max_project_id = R""""(
+SELECT MAX(project_id) FROM `pview_index_database`.`projects`
+)"""";
+
+const char *SQL_insert_new_project = R""""(
+INSERT INTO `pview_index_database`.`projects` (
+  project_id,
+  project_root
+) VALUES (
+   {arg_project_id},
+  "{arg_project_root}"
+)
+)"""";
+
+/**
  * MYSQL table for filepath
  */
 const char *SQL_filepaths_create = R""""(
 CREATE TABLE IF NOT EXISTS
-`pview_index_database`.`filepaths` (
+`pview_index_database`.`{filepaths_tbl}` (
   filepath_id BIGINT,
   filepath VARCHAR(2048),
   create_time DATETIME,
@@ -24,12 +56,12 @@ CREATE TABLE IF NOT EXISTS
 )"""";
 
 const char *SQL_query_filepath_id = R""""(
-SELECT filepath_id FROM `pview_index_database`.`filepaths`
+SELECT filepath_id FROM `pview_index_database`.`{filepaths_tbl}`
 WHERE filepath = "{arg_filepath}"
 )"""";
 
 const char *SQL_replace_filepath = R""""(
-REPLACE INTO `pview_index_database`.`filepaths`
+REPLACE INTO `pview_index_database`.`{filepaths_tbl}`
 (
   filepath_id,
   filepath,
@@ -44,27 +76,27 @@ VALUES
 )"""";
 
 const char *SQL_is_file_exists = R""""(
-SELECT COUNT(1) FROM `pview_index_database`.`filepaths`
+SELECT COUNT(1) FROM `pview_index_database`.`{filepaths_tbl}`
 WHERE filepath = "{arg_filepath}"
 )"""";
 
 const char *SQL_get_file_mtime = R""""(
 SELECT UNIX_TIMESTAMP(MAX(create_time))
-FROM `pview_index_database`.`filepaths`
+FROM `pview_index_database`.`{filepaths_tbl}`
 WHERE filepath = "{arg_filepath}"
 )"""";
 
 const char *SQL_is_file_obselete = R""""(
-SELECT COUNT(1) FROM `pview_index_database`.`filepaths`
+SELECT COUNT(1) FROM `pview_index_database`.`{filepaths_tbl}`
 WHERE FROM_UNIXTIME({arg_create_time}) > (
   SELECT MAX(create_time)
-  FROM `pview_index_database`.`filepaths`
+  FROM `pview_index_database`.`{filepaths_tbl}`
   WHERE filepath = "{arg_filepath}"
 );
 )"""";
 
 const char *SQL_max_filepath_id = R""""(
-SELECT MAX(filepath_id) FROM `pview_index_database`.`filepaths`
+SELECT MAX(filepath_id) FROM `pview_index_database`.`{filepaths_tbl}`
 )"""";
 
 /**
@@ -72,7 +104,7 @@ SELECT MAX(filepath_id) FROM `pview_index_database`.`filepaths`
  */
 const char *SQL_func_def_create = R""""(
 CREATE TABLE IF NOT EXISTS
-`pview_index_database`.`func_definitions` (
+`pview_index_database`.`{func_definitions_tbl}` (
   func_def_id bigint,
   create_time datetime,
   usr VARCHAR(512),
@@ -87,7 +119,7 @@ CREATE TABLE IF NOT EXISTS
 )"""";
 
 const char *SQL_func_def_insert_header = R""""(
-INSERT IGNORE INTO `pview_index_database`.`func_definitions` (
+INSERT IGNORE INTO `pview_index_database`.`{func_definitions_tbl}` (
   func_def_id,
   create_time,
   usr,
@@ -111,24 +143,24 @@ const char *SQL_func_def_insert_param = R""""(
 )"""";
 
 const char *SQL_query_func_def_id = R""""(
-SELECT func_def_id FROM `pview_index_database`.`func_definitions`
+SELECT func_def_id FROM `pview_index_database`.`{func_definitions_tbl}`
 WHERE usr = "{arg_usr}"
 )"""";
 
 const char *SQL_query_func_def_usr = R""""(
-SELECT usr FROM `pview_index_database`.`func_definitions`
+SELECT usr FROM `pview_index_database`.`{func_definitions_tbl}`
 WHERE qualified = "{arg_qualified}"
 )"""";
 
 const char *SQL_query_func_def_using_qualified = R""""(
-SELECT qualified FROM `pview_index_database`.`func_definitions`
+SELECT qualified FROM `pview_index_database`.`{func_definitions_tbl}`
 WHERE usr = "{arg_usr}"
 ORDER BY create_time DESC
 LIMIT 1;
 )"""";
 
 const char *SQL_max_func_def_id = R""""(
-SELECT MAX(func_def_id) FROM `pview_index_database`.`func_definitions`
+SELECT MAX(func_def_id) FROM `pview_index_database`.`{func_definitions_tbl}`
 )"""";
 
 /**
@@ -136,7 +168,7 @@ SELECT MAX(func_def_id) FROM `pview_index_database`.`func_definitions`
  */
 const char *SQL_func_call_create = R""""(
 CREATE TABLE IF NOT EXISTS
-`pview_index_database`.`func_calls` (
+`pview_index_database`.`{func_calls_tbl}` (
   func_call_id bigint,
   create_time datetime,
   caller_usr VARCHAR(512),
@@ -152,7 +184,7 @@ CREATE TABLE IF NOT EXISTS
 )"""";
 
 const char *SQL_func_call_insert_header = R""""(
-INSERT IGNORE INTO `pview_index_database`.`func_calls` (
+INSERT IGNORE INTO `pview_index_database`.`{func_calls_tbl}` (
   func_call_id,
   create_time,
   caller_usr,
@@ -178,21 +210,21 @@ const char *SQL_func_call_insert_param = R""""(
 )"""";
 
 const char *SQL_query_func_call_info = R""""(
-SELECT usr, qualified FROM `pview_index_database`.`func_calls`
+SELECT usr, qualified FROM `pview_index_database`.`{func_calls_tbl}`
 WHERE caller_usr = "{arg_caller_usr}"
 )"""";
 const char *SQL_query_func_call_info_with_throw = R""""(
 SELECT usr, qualified, caller_might_throw
-FROM `pview_index_database`.`func_calls`
+FROM `pview_index_database`.`{func_calls_tbl}`
 WHERE caller_usr = "{arg_caller_usr}"
 )"""";
 
 const char *SQL_query_caller_usr_using_qualified = R""""(
-SELECT caller_usr FROM `pview_index_database`.`func_calls`
+SELECT caller_usr FROM `pview_index_database`.`{func_calls_tbl}`
 WHERE qualified = "{arg_qualified}"
 )"""";
 
 const char *SQL_max_func_call_id = R""""(
-SELECT MAX(func_call_id) FROM `pview_index_database`.`func_calls`
+SELECT MAX(func_call_id) FROM `pview_index_database`.`{func_calls_tbl}`
 )"""";
 }  // namespace pview

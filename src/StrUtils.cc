@@ -66,4 +66,14 @@ std::vector<std::string> split_string(const std::string &str,
                                       const std::string &delimiter) {
   return split_string_impl(str, delimiter);
 }
+
+std::string replace_string(std::string target, const std::string &search,
+                           const std::string &replace) {
+  size_t pos = 0;
+  while ((pos = target.find(search, pos)) != std::string::npos) {
+    target.replace(pos, search.length(), replace);
+    pos += replace.length();
+  }
+  return target;
+}
 }  // namespace pview
