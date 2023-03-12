@@ -1,3 +1,4 @@
 MY FEATURE LISTS
-- check translation unit compilation failure
 - background purger of obselete entries
+- fixed the hard-coded exception analysis level limit
+

@@ -34,7 +34,7 @@ namespace pview {
  *    e.g., indexing source file, formatting SQL stmt, etc.
  *  - Large number of store task means large number of mysql connection
  *    and large number of concurrent DML statements and will incur overhead
- *    when dealing with the backedn MYSQL server (mysql have to deal with
+ *    when dealing with the backend MYSQL server (mysql have to deal with
  *    lock contention when inserting into adjacent pages).
  *    The best practice is to form a "connection pool" as in most database
  *    application.

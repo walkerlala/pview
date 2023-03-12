@@ -31,8 +31,8 @@ class IncludeAnalyzer;
  *    and get all the file it includes, and all the files which are included
  *    by included files.
  *
- * It seems that we only some preprocessor hook for this task, but clang does
- * not provide such interface.
+ * The compilation work is a little heavy, and it seems we only need some
+ * preprocessor hook for this task, but clang does not provide such interface.
  ******************************************************************************/
 class IncludeAnalyzer {
  public:

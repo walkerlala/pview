@@ -123,7 +123,7 @@ bool IncludeAnalyzer::check_need_reindex() {
 
   Timer timer;
 
-  unique_ptr<CompilerInstance> inst = build_compiler_instance(cmd_);
+  unique_ptr<CompilerInstance> inst = build_compiler_instance(cmd_, nullptr);
   if (!inst) {
     LOG(ERROR) << "Failed to build CompilerInstance for file " << cmd_.Filename;
     return true;

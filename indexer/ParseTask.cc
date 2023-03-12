@@ -71,6 +71,7 @@ using clang::CompilerInstance;
 using clang::CompilerInvocation;
 using clang::Decl;
 using clang::DeclContext;
+using clang::Diagnostic;
 using clang::DiagnosticOptions;
 using clang::DiagnosticsEngine;
 using clang::FileEntry;
@@ -287,6 +288,8 @@ std::string ParseTask::gen_batch_update_func_calls_stmt(size_t *start) {
 }
 
 int ParseTask::send_indexed_result() {
+  ParseTaskTranslationUnitGuard cleaner(this);
+
   std::vector<std::string> stmts;
 
   /** FuncDef index result */
@@ -318,14 +321,16 @@ int ParseTask::send_indexed_result() {
   ASSERT(replace_fn_stmt.size());
   stmts.push_back(std::move(replace_fn_stmt));
 
-  func_defs_.clear();
-  func_calls_.clear();
-  class_defs_.clear();
-
   IndexCtx *ctx = IndexCtx::get_instance();
   auto *index_queue = ctx->get_index_queue();
   index_queue->add_stmts(std::move(stmts));
   return 0;
+}
+
+void ParseTask::clear_current_translation_unit_result() {
+  func_defs_.clear();
+  func_calls_.clear();
+  class_defs_.clear();
 }
 
 int ParseTask::update_indexed_file(const std::string &filepath,
@@ -594,6 +599,7 @@ void ParseTask::add_class_def(const ClassDefPtr &ptr) {
 /** @returns true on error, otherwise false */
 bool ParseTask::index_translation_unit(size_t idx) {
   ASSERT(idx < cmds_.size());
+  ParseTaskTranslationUnitGuard cleaner(this);
   Timer timer;
 
   const CompileCommand &cmd = cmds_[idx];
@@ -607,17 +613,17 @@ bool ParseTask::index_translation_unit(size_t idx) {
   /**
    * Skip this file if it is not updated since last time.
    */
-  std::string original_filepath = cmd.Filename;
+  std::string full_filepath = cmd.Filename;
 
-  std::string filepath = original_filepath;
+  std::string filepath = full_filepath;
   simplify_source_path(filepath);
   int64_t last_mtime = get_file_last_mtime(filepath);
 
-  IncludeAnalyzer include_analyzer(original_filepath, last_mtime, cmd);
+  IncludeAnalyzer include_analyzer(full_filepath, last_mtime, cmd);
   bool need_reindex = include_analyzer.check_need_reindex();
   if (!need_reindex) {
     LOG(INFO) << "File indexes up-to-date (" << idx << "/" << cmds_.size()
-              << "): " << original_filepath;
+              << "): " << full_filepath;
     return false;
   }
 
@@ -625,19 +631,20 @@ bool ParseTask::index_translation_unit(size_t idx) {
   int64_t filepath_id = ctx->get_next_filepath_id();
 
   /**
-   * Write an entry of this file into the database, with a timestamp value 0.
+   * Before launching a clang frontend instance to parse & compile the
+   * translation unit, record transient filepath/filepath id/file mtime
+   * for the current translation unit in ParseTask.
    *
-   * After all tokens are indexed, the timestamp value will be corrected to
-   * file_mtime. If anything bad happens in-between, this file is marked as
-   * 0 and the next time we try to index it, it will be indexed again.
+   * When parsing&compiling, different kinds of SQL stmts for all kinds of
+   * symbols will be generated and queued continously. All symbols of a
+   * translation unit will then be committed to the backend database
+   * within a single transaction, such that we could see at least one
+   * consistent view of a translation unit.
    *
-   * Obselete entries of this file will be purged async.
+   * The @current_time_ is used as a "multi-version" token for all kinds of
+   * symbols. For the filepaths table, it is used to check whether a translation
+   * unit is obselete and should be re-indexed.
    */
-  if (update_indexed_file(filepath, filepath_id, 0)) {
-    LOG(ERROR) << "Failed to update indexed file: " << filepath;
-    return true;
-  }
-
   timespec tv;
   clock_gettime(CLOCK_REALTIME, &tv);
   current_time_ = static_cast<int64_t>(tv.tv_sec);
@@ -645,7 +652,9 @@ bool ParseTask::index_translation_unit(size_t idx) {
   current_filepath_id_ = filepath_id;
   current_translation_unit_idx_ = idx;
 
-  unique_ptr<CompilerInstance> inst = build_compiler_instance(cmd);
+  auto diagnostic_consumer = make_shared<PViewDiagConsumer>(this);
+  unique_ptr<CompilerInstance> inst =
+      build_compiler_instance(cmd, diagnostic_consumer);
   if (!inst) {
     LOG(ERROR) << "Failed to build CompilerInstance for file " << cmd.Filename;
     return true;
@@ -675,8 +684,13 @@ bool ParseTask::index_translation_unit(size_t idx) {
   }
 
   if (!ok) {
-    LOG(ERROR) << "failed to index file: " << cmd.Filename
+    LOG(ERROR) << "Failed to index file: " << cmd.Filename
                << ", err: " << err_msg;
+    return true;
+  }
+  if (diagnostic_consumer->num_errors() > 0) {
+    LOG(ERROR) << "Failed to index file: " << cmd.Filename
+               << ", num of error: " << diagnostic_consumer->num_errors();
     return true;
   }
 
@@ -685,13 +699,10 @@ bool ParseTask::index_translation_unit(size_t idx) {
    *  - statements for FuncDef
    *  - statements for FuncCall
    *  - statements for filepath
-   * The IndexQueue and ParseTask::store_tasks() guarantee the
-   * "happens-after-or-fail" relationship within the same batch, so that
-   * we are sure that update to filepaths will come after anything other, which
-   * means that
-   *  - If update to a file path happens, all index result of this file
-   *    have succeeded, otherwise
-   *  - If update to a file does not happen, it will be re-index the next time.
+   * The IndexQueue and ParseTask::do_store() guarantee the all SQL stmts
+   * of a translation unit will be committed within a single transaction,
+   * such that they all succeed or fail atomically. This make sure that we
+   * have consistent view of a translation unit.
    */
   if (send_indexed_result()) {
     LOG(ERROR) << "Fail to send batched-update indexed result for " << filepath;
@@ -1104,5 +1115,23 @@ unique_ptr<ASTConsumer> PViewFrontendAction::CreateASTConsumer(
       data_consumer_, index_opts, std::move(pp)));
 
   return make_unique<MultiplexConsumer>(std::move(consumers));
+}
+
+/******************************************************************************
+ * PViewDiagConsumer
+ *
+ ******************************************************************************/
+void PViewDiagConsumer::HandleDiagnostic(DiagnosticsEngine::Level DiagLevel,
+                                         const Diagnostic &Info) {
+  /** Only handle Level::Error and Level::Fatal */
+  if (DiagLevel < DiagnosticsEngine::Level::Error) {
+    return;
+  }
+  increase_error();
+
+  llvm::SmallString<100> Message;
+  Info.FormatDiagnostic(Message);
+  LOG(ERROR) << "Failed to compile " << parse_task_->get_current_filepath()
+             << ", errmsg: " << static_cast<std::string>(Message);
 }
 }  // namespace pview
