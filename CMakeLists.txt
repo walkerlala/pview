@@ -137,7 +137,7 @@ EXECUTE_PROCESS(
 # Dependencies for pview except LLVM.
 # Prefer static linking.
 FUNCTION(ADD_COMMON_LIB_OPTIONS target)
-  TARGET_INCLUDE_DIRECTORIES(${target} SYSTEM PRIVATE ${PROJECT_ROOT}/src)
+  TARGET_INCLUDE_DIRECTORIES(${target} SYSTEM PRIVATE ${PROJECT_ROOT}/indexer)
 
   # boost
   TARGET_INCLUDE_DIRECTORIES(${target} SYSTEM PRIVATE ${BOOST_INCLUDE_DIR})
@@ -254,27 +254,27 @@ FUNCTION(ADD_LLVM_LIB_OPTIONS target)
 ENDFUNCTION()
 
 SET(
-  PVIEW_SOURCES
-  ${PROJECT_ROOT}/src/ClangCompiler.cc
-  ${PROJECT_ROOT}/src/ExceptionAnalyzer.cc
-  ${PROJECT_ROOT}/src/FileUtils.cc
-  ${PROJECT_ROOT}/src/IncludeAnalyzer.cc
-  ${PROJECT_ROOT}/src/IndexCtx.cc
-  ${PROJECT_ROOT}/src/IndexQueue.cc
-  ${PROJECT_ROOT}/src/MYSQLConn.cc
-  ${PROJECT_ROOT}/src/MYSQLMgr.cc
-  ${PROJECT_ROOT}/src/Main.cc
-  ${PROJECT_ROOT}/src/PView.cc
-  ${PROJECT_ROOT}/src/ParseTask.cc
-  ${PROJECT_ROOT}/src/SQL.cc
-  ${PROJECT_ROOT}/src/StrUtils.cc
-  ${PROJECT_ROOT}/src/ThreadPool.cc
-  ${PROJECT_ROOT}/src/siphash.cc
+  PVIEW_INDEXER_SOURCES
+  ${PROJECT_ROOT}/indexer/ClangCompiler.cc
+  ${PROJECT_ROOT}/indexer/ExceptionAnalyzer.cc
+  ${PROJECT_ROOT}/indexer/FileUtils.cc
+  ${PROJECT_ROOT}/indexer/IncludeAnalyzer.cc
+  ${PROJECT_ROOT}/indexer/IndexCtx.cc
+  ${PROJECT_ROOT}/indexer/IndexQueue.cc
+  ${PROJECT_ROOT}/indexer/MYSQLConn.cc
+  ${PROJECT_ROOT}/indexer/MYSQLMgr.cc
+  ${PROJECT_ROOT}/indexer/Main.cc
+  ${PROJECT_ROOT}/indexer/PView.cc
+  ${PROJECT_ROOT}/indexer/ParseTask.cc
+  ${PROJECT_ROOT}/indexer/SQL.cc
+  ${PROJECT_ROOT}/indexer/StrUtils.cc
+  ${PROJECT_ROOT}/indexer/ThreadPool.cc
+  ${PROJECT_ROOT}/indexer/siphash.cc
 )
-SET(PVIEW_EXECUTABLE_NAME pview)
-ADD_EXECUTABLE(${PVIEW_EXECUTABLE_NAME} ${PVIEW_SOURCES})
-ADD_COMMON_LIB_OPTIONS(${PVIEW_EXECUTABLE_NAME})
-ADD_LLVM_LIB_OPTIONS(${PVIEW_EXECUTABLE_NAME})
-ADD_DEPENDENCIES(${PVIEW_EXECUTABLE_NAME} mysqld_binary)  # build mysqld binary before building pview
-ADD_DEPENDENCIES(${PVIEW_EXECUTABLE_NAME} mysql_conn_lib) # build mysql-connector before building pview
-INSTALL(TARGETS ${PVIEW_EXECUTABLE_NAME} DESTINATION ${CMAKE_INSTALL_PREFIX})
+SET(PVIEW_INDEXER_EXECUTABLE_NAME pview_indexer)
+ADD_EXECUTABLE(${PVIEW_INDEXER_EXECUTABLE_NAME} ${PVIEW_INDEXER_SOURCES})
+ADD_COMMON_LIB_OPTIONS(${PVIEW_INDEXER_EXECUTABLE_NAME})
+ADD_LLVM_LIB_OPTIONS(${PVIEW_INDEXER_EXECUTABLE_NAME})
+ADD_DEPENDENCIES(${PVIEW_INDEXER_EXECUTABLE_NAME} mysqld_binary)  # build mysqld binary before building pview_indexer
+ADD_DEPENDENCIES(${PVIEW_INDEXER_EXECUTABLE_NAME} mysql_conn_lib) # build mysql-connector before building pview_indexer
+INSTALL(TARGETS ${PVIEW_INDEXER_EXECUTABLE_NAME} DESTINATION ${CMAKE_INSTALL_PREFIX})
