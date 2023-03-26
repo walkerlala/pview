@@ -1,6 +1,8 @@
 #!/bin/bash -x
 
-cd "$(dirname "$0")"
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+echo "Directory of current script: $SCRIPT_DIR"
+cd ${SCRIPT_DIR}
 
 root_dir=`pwd`
 default_build_dir=`pwd`/build
@@ -70,8 +72,38 @@ dump_options()
   echo "Sanitizer=$san_type"
 }
 
+download_files()
+{
+  # Download LLVM source code from github if missed
+  llvm_tar_ball_path=${SCRIPT_DIR}/extra/llvm/14.0.6/llvmorg-14.0.6.tar.gz
+  llvm_tar_ball_md5_checksum=52e6c9ea5267274bffd5f0f5ba24e076
+  llvm_download_url=https://github.com/llvm/llvm-project/archive/refs/tags/llvmorg-14.0.6.tar.gz
+  llvm_download_timeout=300
+  if [ ! -f "${llvm_tar_ball_path}" ]; then
+    echo "Downloading LLVM source code from ${llvm_download_url} ..."
+    echo "LLVM tar ball will be put at: ${llvm_tar_ball_path}"
+    wget ${llvm_download_url} -O ${llvm_tar_ball_path} --timeout=${llvm_download_timeout}
+    if [[ $? -eq 0 ]]; then
+      echo "LLVM tar ball downloaded."
+    else
+      echo "Failed to download LLVM tar ball. Please download manually from ${llvm_download_url} and put it at ${llvm_tar_ball_path}"
+      rm -f ${llvm_tar_ball_path}
+      exit 1
+    fi
+  else
+    file_md5_checksum=$(md5sum ${llvm_tar_ball_path} |awk '{print $1}')
+    if [ "${file_md5_checksum}" = "${llvm_tar_ball_md5_checksum}" ]; then
+      echo "LLVM tar ball exists."
+    else
+      echo "LLVM tar ball checksump mismatch. Expected ${llvm_tar_ball_md5_checksum}, but got ${file_md5_checksum}"
+      exit 1
+    fi
+  fi
+}
+
 parse_options "$@"
 dump_options
+download_files
 
 if [ x"$build_type" = x"debug" ]; then
   build_type="Debug"

@@ -11,6 +11,9 @@ extra/mysql-server/8.0.32
 extra/mysql-server/mysql-server-mysql-8.0.32
 extra/mysql-server/mysql-8.0.32.tar.gz
 
+extra/llvm/14.0.6/llvm-project-llvmorg-14.0.6/
+extra/llvm/14.0.6/llvmorg-14.0.6.tar.gz
+
 #mysql connector unzipped source code dir
 extra/mysql-connector/mysql-connector-cpp-8.0.13/
 

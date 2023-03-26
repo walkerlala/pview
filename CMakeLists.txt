@@ -10,7 +10,6 @@ SET(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
 OPTION(WITH_ASAN "Building with address sanitizer" OFF)
 OPTION(USE_LD_MOLD "Use the mold linker" ON)
-SET(LLVM_INSTALL_PATH "/home/yubin.ryb/projects/dbtools/llvm/llvm-project-llvmorg-14.0.6/build")
 
 MACRO(CHECK_MOLD_LINKER_USABLE MOLD_CHECK_RESULT)
   SET(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -fuse-ld=mold")
@@ -49,6 +48,7 @@ MESSAGE(STATUS "CMAKE_CXX_COMPILER_VERSION: ${CMAKE_CXX_COMPILER_VERSION}")
 IF(NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
   MESSAGE(WARNING "Only clang compiler is officially supported")
   MESSAGE(WARNING "Using other compiler might fail to compile this program")
+  MESSAGE(FATAL_ERROR "Please use clang to compile.")
 ENDIF()
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -gdwarf-4")
@@ -120,19 +120,28 @@ EXECUTE_PROCESS(
 )
 add_subdirectory(extra/fmt/fmt-9.1.0)
 
-# build mysql-server
-include(cmake/mysql-server.cmake)
-# build mysql-connector
-# mysql-connector depends on mysql-server's boost, so always build mysql-server
-# before build mysql-connector.
-include(cmake/mysql-connector.cmake)
-
 # rapidjson is header-only
 EXECUTE_PROCESS(
   COMMAND ${CMAKE_COMMAND} -E tar xf ${CMAKE_SOURCE_DIR}/extra/rapidjson/v1.1.0.tar.gz
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/extra/rapidjson
   RESULT_VARIABLE tar_result_rapidjson
 )
+
+# Build bundle LLVM
+#
+# The pview project requires a special build configuration of the LLVM lib:
+#   - enable RTTI, which is default disabled on default LLVM build
+# Using a external LLVM brings more trouble than convenience.
+include(cmake/llvm.cmake)
+
+# Build mysql-server
+include(cmake/mysql-server.cmake)
+
+# Build mysql-connector
+#
+# mysql-connector depends on mysql-server's boost, so always build mysql-server
+# before build mysql-connector.
+include(cmake/mysql-connector.cmake)
 
 # Dependencies for pview except LLVM.
 # Prefer static linking.
@@ -184,13 +193,16 @@ FUNCTION(ADD_COMMON_LIB_OPTIONS target)
     ${PROJECT_ROOT}/extra/mysql-connector/mysql-connector-cpp-8.0.13/build/jdbc/install/lib/libmysqlcppconn-static.a)
 ENDFUNCTION()
 
-# LLVM / CLANG linking.
+# LLVM / CLANG linking, using external LLVM libs.
+# For dev purpose only.
 #
 # Note:
 #   - It is required that LLVM is compiled with RTTI enabled.
 #     The mysql-connector we use require the use of C++ exception, and therefore
 #     the whole project should enable RTTI.
-FUNCTION(ADD_LLVM_LIB_OPTIONS target)
+#     To avoid misuse and misconfiguration, we only use the bundled LLVM lib.
+FUNCTION(ADD_EXTERNAL_LLVM_LIB_OPTIONS target)
+  SET(LLVM_INSTALL_PATH "/home/yubin.ryb/projects/dbtools/llvm/llvm-project-llvmorg-14.0.6/build")
   SET(PATH_OF_CLANG_CONFIG "${LLVM_INSTALL_PATH}/lib/cmake/clang")
   SET(PATH_OF_LLVM_CONFIG "${LLVM_INSTALL_PATH}/lib/cmake/llvm")
   IF (NOT EXISTS "${PATH_OF_CLANG_CONFIG}/ClangConfig.cmake")
@@ -253,6 +265,154 @@ FUNCTION(ADD_LLVM_LIB_OPTIONS target)
   #TARGET_LINK_LIBRARIES(${target} PRIVATE tinfo)
 ENDFUNCTION()
 
+# LLVM / CLANG linking, using bundled LLVM libs.
+FUNCTION(ADD_BUNDLED_LLVM_LIB_OPTIONS target)
+  SET(BUNDLED_LLVM_SOURCE_DIR ${CMAKE_SOURCE_DIR}/extra/llvm/14.0.6/llvm-project-llvmorg-14.0.6)
+  SET(BUNDLED_LLVM_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/llvm)
+
+  TARGET_COMPILE_OPTIONS(${target} PRIVATE -frtti)
+  TARGET_INCLUDE_DIRECTORIES(
+    ${target}
+    SYSTEM PRIVATE
+    ${CMAKE_INSTALL_PREFIX}/llvm/include
+  )
+
+  # Statically link libclang & llvm
+  TARGET_LINK_DIRECTORIES(${target} SYSTEM PRIVATE ${BUNDLED_LLVM_INSTALL_DIR}/lib)
+  SET(PVIEW_LLVM_LIB_NAMES
+    clangAnalysis
+    clangAnalysisFlowSensitive
+    clangAPINotes
+    clangARCMigrate
+    clangAST
+    clangASTMatchers
+    clangBasic
+    clangCodeGen
+    clangCrossTU
+    clangDependencyScanning
+    clangDirectoryWatcher
+    clangDriver
+    clangDynamicASTMatchers
+    clangEdit
+    clangFormat
+    clangFrontend
+    clangFrontendTool
+    clangHandleCXX
+    clangHandleLLVM
+    clangIndex
+    clangIndexSerialization
+    clangInterpreter
+    clangLex
+    clangParse
+    clangRewrite
+    clangRewriteFrontend
+    clangSema
+    clangSerialization
+    clangStaticAnalyzerCheckers
+    clangStaticAnalyzerCore
+    clangStaticAnalyzerFrontend
+    clangTesting
+    clangTooling
+    clangToolingASTDiff
+    clangToolingCore
+    clangToolingInclusions
+    clangToolingRefactoring
+    clangToolingSyntax
+    clangTransformer
+
+    LLVMWindowsManifest
+    LLVMXRay
+    LLVMLibDriver
+    LLVMDlltoolDriver
+    LLVMCoverage
+    LLVMLineEditor
+    LLVMX86TargetMCA
+    LLVMX86Disassembler
+    LLVMX86AsmParser
+    LLVMX86CodeGen
+    LLVMX86Desc
+    LLVMX86Info
+    LLVMOrcJIT
+    LLVMMCJIT
+    LLVMJITLink
+    LLVMInterpreter
+    LLVMExecutionEngine
+    LLVMRuntimeDyld
+    LLVMOrcTargetProcess
+    LLVMOrcShared
+    LLVMDWP
+    LLVMSymbolize
+    LLVMDebugInfoPDB
+    LLVMDebugInfoGSYM
+    LLVMOption
+    LLVMObjectYAML
+    LLVMMCA
+    LLVMMCDisassembler
+    LLVMLTO
+    LLVMPasses
+    LLVMCFGuard
+    LLVMCoroutines
+    LLVMObjCARCOpts
+    LLVMipo
+    LLVMVectorize
+    LLVMLinker
+    LLVMInstrumentation
+    LLVMFrontendOpenMP
+    LLVMFrontendOpenACC
+    LLVMExtensions
+    LLVMDWARFLinker
+    LLVMGlobalISel
+    LLVMMIRParser
+    LLVMAsmPrinter
+    LLVMDebugInfoMSF
+    LLVMSelectionDAG
+    LLVMCodeGen
+    LLVMIRReader
+    LLVMAsmParser
+    LLVMInterfaceStub
+    LLVMFileCheck
+    LLVMFuzzMutate
+    LLVMTarget
+    LLVMScalarOpts
+    LLVMInstCombine
+    LLVMAggressiveInstCombine
+    LLVMTransformUtils
+    LLVMBitWriter
+    LLVMAnalysis
+    LLVMProfileData
+    LLVMDebugInfoDWARF
+    LLVMObject
+    LLVMTextAPI
+    LLVMMCParser
+    LLVMMC
+    LLVMDebugInfoCodeView
+    LLVMBitReader
+    LLVMCore
+    LLVMRemarks
+    LLVMBitstreamReader
+    LLVMBinaryFormat
+    LLVMTableGen
+    LLVMSupport
+    LLVMDemangle
+  )
+  TARGET_LINK_LIBRARIES(${target} PRIVATE ${PVIEW_LLVM_LIB_NAMES})
+
+  # system, asan, etc
+  #
+  # We can run `llvm-config --system-libs` to obtain llvm depency
+  TARGET_LINK_LIBRARIES(${target} PRIVATE pthread)
+  TARGET_LINK_LIBRARIES(${target} PRIVATE rt)
+  TARGET_LINK_LIBRARIES(${target} PRIVATE dl)
+  TARGET_LINK_LIBRARIES(${target} PRIVATE m)
+  TARGET_LINK_LIBRARIES(${target} PRIVATE z)
+  TARGET_LINK_LIBRARIES(${target} PRIVATE tinfo)
+ENDFUNCTION()
+
+FUNCTION(ADD_LLVM_LIB_OPTIONS target)
+  #ADD_EXTERNAL_LLVM_LIB_OPTIONS(${target})
+  ADD_BUNDLED_LLVM_LIB_OPTIONS(${target})
+ENDFUNCTION()
+
 SET(
   PVIEW_INDEXER_SOURCES
   ${PROJECT_ROOT}/indexer/ClangCompiler.cc
@@ -277,4 +437,5 @@ ADD_COMMON_LIB_OPTIONS(${PVIEW_INDEXER_EXECUTABLE_NAME})
 ADD_LLVM_LIB_OPTIONS(${PVIEW_INDEXER_EXECUTABLE_NAME})
 ADD_DEPENDENCIES(${PVIEW_INDEXER_EXECUTABLE_NAME} mysqld_binary)  # build mysqld binary before building pview_indexer
 ADD_DEPENDENCIES(${PVIEW_INDEXER_EXECUTABLE_NAME} mysql_conn_lib) # build mysql-connector before building pview_indexer
+ADD_DEPENDENCIES(${PVIEW_INDEXER_EXECUTABLE_NAME} llvm_binary)    # build LLVM libs before building pview_indexer
 INSTALL(TARGETS ${PVIEW_INDEXER_EXECUTABLE_NAME} DESTINATION ${CMAKE_INSTALL_PREFIX})
